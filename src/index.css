@@ -1,0 +1,801 @@
+:root {
+  --bg: #0b1118;
+  --chrome: #141d26;
+  --chrome-2: #1b2631;
+  --chrome-3: #253442;
+  --line: #2a3744;
+  --text: #e6edf3;
+  --muted: #8b9bab;
+  --accent: #e8b964;
+  --accent-ink: #2a1f08;
+  --danger: #e06a5c;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  color-scheme: dark;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
+  color: var(--text);
+}
+
+kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--chrome-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* O workspace ancora o dock flutuante no canto do mapa. */
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+/* ------------------------------------------------------- barra superior */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 10px 0 14px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.brand {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+/* Ponto discreto: salvar vive no menu, mas o estado nao pode ficar invisivel. */
+.unsaved {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: -4px;
+}
+
+.active-paint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 11px;
+  max-width: 260px;
+}
+
+.active-paint .small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  background: var(--chrome-2);
+  border: none;
+  padding: 5px 11px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--line);
+}
+
+.segmented button:hover {
+  color: var(--text);
+}
+
+.segmented button.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.icon-button:hover {
+  background: var(--chrome-2);
+  color: var(--text);
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 210px;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+  z-index: 40;
+}
+
+.menu button,
+.menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 9px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.menu button span:first-child {
+  flex: 1;
+}
+
+.menu button:hover:not(:disabled),
+.menu-toggle:hover {
+  background: var(--chrome-3);
+}
+
+.menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 5px 2px;
+}
+
+.menu-toggle {
+  color: var(--muted);
+}
+
+/* -------------------------------------------------- dock de ferramentas */
+
+.dock {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.dock-menu {
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  min-width: 182px;
+}
+
+.dock-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 9px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+
+.dock-menu button:hover {
+  background: var(--chrome-3);
+}
+
+.dock-menu button.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.dock-menu button.active kbd {
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--accent-ink);
+}
+
+.dock-menu svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+.dock-fab svg {
+  width: 23px;
+  height: 23px;
+}
+
+.dock-label {
+  flex: 1;
+  font-size: 13px;
+}
+
+/* So o icone: o nome da ferramenta fica no tooltip e na lista aberta. */
+.dock-fab {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 50%;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+
+.dock-fab:hover {
+  filter: brightness(1.08);
+}
+
+.dock-fab.is-open {
+  background: var(--chrome-3);
+  color: var(--text);
+}
+
+.dock-brush {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  padding: 6px 13px 6px 10px;
+  color: var(--muted);
+}
+
+.dock-brush-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.dock-brush input[type='range'] {
+  width: 104px;
+  accent-color: var(--accent);
+}
+
+.dock-brush-num {
+  font-size: 11.5px;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ mapa */
+
+.map {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.map canvas {
+  display: block;
+}
+
+.map-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.map-status,
+.map-scale {
+  position: absolute;
+  bottom: 16px;
+  background: rgba(10, 17, 24, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+/* Centralizado para nao brigar com o dock, que fica no canto esquerdo. */
+.map-status {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.map-status--action {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.map-scale {
+  right: 16px;
+  color: var(--muted);
+}
+
+.poi {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  pointer-events: auto;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.poi-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(20, 29, 38, 0.9);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+  transition: transform 0.12s;
+}
+
+.poi:hover .poi-pin {
+  transform: scale(1.18);
+}
+
+.poi.is-selected .poi-pin {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 185, 100, 0.5);
+}
+
+.poi-pin svg {
+  width: 14px;
+  height: 14px;
+  fill: #1a2029;
+}
+
+.poi-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #16202a;
+  text-shadow:
+    0 0 3px #fff,
+    0 0 3px #fff,
+    0 0 4px #fff;
+}
+
+/* ---------------------------------------------------------------- painel */
+
+.panel {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--chrome);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.tabs button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 10px 4px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Cabecalho da ficha: a seta volta para a lista do mesmo tipo. */
+.detail-head {
+  padding: 10px 16px 13px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.back {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 2px 0 9px;
+  margin-left: -4px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.back:hover {
+  color: var(--text);
+}
+
+.back svg {
+  width: 15px;
+  height: 15px;
+}
+
+.title-input {
+  width: 100%;
+  font-size: 18px;
+  font-weight: 600;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin-bottom: 9px;
+}
+
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
+.swatch-row input[type='color'] {
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+
+.panel-body section + section {
+  margin-top: 18px;
+}
+
+.panel button:not(.row):not(.chip):not(.back):not(.tabs button),
+.panel select {
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.panel button:not(.row):not(.chip):not(.back):hover {
+  background: var(--chrome-3);
+}
+
+.panel button.primary {
+  width: 100%;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.panel button.primary:hover {
+  background: #f2c67a;
+}
+
+.panel button.danger {
+  width: 100%;
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+  margin-top: 16px;
+}
+
+.hint {
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  background: var(--chrome-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.badge--paint {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.row:hover {
+  background: var(--chrome-2);
+}
+
+.row-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row--inline {
+  padding-left: 0;
+  width: auto;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.field p {
+  margin: 0;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  resize: vertical;
+}
+
+.capitais {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.capitais strong {
+  color: var(--text);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--chrome-3);
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.chip.filter:not(.active) {
+  opacity: 0.4;
+}
+
+.chips--add {
+  margin-top: 8px;
+}
+
+.chips--add .chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  opacity: 0.75;
+}
+
+.chips--add .chip:hover,
+.chips--add .chip.active {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------- splash */
+
+.splash {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  text-align: center;
+}
+
+.splash h1 {
+  font-size: 22px;
+  margin: 0 0 10px;
+}
+
+.setup {
+  max-width: 520px;
+  text-align: left;
+  background: var(--chrome);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px 28px;
+  line-height: 1.6;
+}
+
+.setup ol {
+  padding-left: 20px;
+}
+
+.setup li {
+  margin-bottom: 8px;
+}
+
+code {
+  background: var(--chrome-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12.5px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}

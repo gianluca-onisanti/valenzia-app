@@ -1,0 +1,66 @@
+{
+  "name": "Valenzia",
+  "territories": [
+    {
+      "slot": 1,
+      "id": "novo-pais",
+      "name": "Brazera",
+      "kind": "country",
+      "color": "#d9796f"
+    },
+    {
+      "slot": 2,
+      "id": "novo-pais-2",
+      "name": "Diogolândia",
+      "kind": "country",
+      "color": "#92bc20",
+      "capital": "",
+      "governo": "Democracia Clássica"
+    },
+    {
+      "slot": 3,
+      "id": "novo-pais-3",
+      "name": "Arquipélago Salocínia",
+      "kind": "country",
+      "color": "#886cd5"
+    }
+  ],
+  "biomes": [],
+  "pois": [
+    {
+      "id": "capital-1",
+      "name": "Faris",
+      "type": "capital",
+      "x": 431,
+      "y": 486
+    },
+    {
+      "id": "cidade-1",
+      "name": "Porto de Kruger",
+      "type": "cidade",
+      "x": 449,
+      "y": 521
+    },
+    {
+      "id": "cidade-2",
+      "name": "Domingues",
+      "type": "cidade",
+      "x": 412,
+      "y": 512
+    },
+    {
+      "id": "capital-2",
+      "name": "Verona",
+      "type": "capital",
+      "x": 1267,
+      "y": 1415
+    },
+    {
+      "id": "capital-3",
+      "name": "Tyr",
+      "type": "capital",
+      "x": 416,
+      "y": 456
+    }
+  ]
+}

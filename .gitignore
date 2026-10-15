@@ -1,0 +1,13 @@
+node_modules
+dist
+tsconfig.tsbuildinfo
+
+# Gerados por `npm run prepare:map` a partir de public/source/base.png.
+public/mask.png
+public/coast.png
+public/data/geo.json
+
+# O que voce pinta NAO entra aqui -- e o conteudo do seu mundo:
+#   public/data/world.json
+#   public/data/territory.png
+#   public/data/biome.png
