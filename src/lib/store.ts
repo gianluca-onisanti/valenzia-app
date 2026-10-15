@@ -75,31 +75,70 @@ export function encodeLayer(
   })
 }
 
+/**
+ * Le a camada de volta do PNG.
+ *
+ * Os dois cuidados aqui nao sao frescura: o valor do pixel e o numero do dono,
+ * nao uma cor, entao qualquer ajuste de um bit que o navegador ache bonito
+ * inventa um pais. A conversao para o perfil do monitor fica desligada, e o
+ * canvas pedido como 'willReadFrequently' fica na CPU, longe do arredondamento
+ * que a leitura de volta da GPU pode introduzir.
+ */
 export async function decodeLayer(
   source: Blob | string,
   width: number,
   height: number,
 ): Promise<Uint16Array> {
-  const url = typeof source === 'string' ? source : URL.createObjectURL(source)
+  const bitmap = await loadBitmap(source)
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('Camada ilegivel'))
-      el.src = url
-    })
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
-    const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext('2d', {
+      willReadFrequently: true,
+      colorSpace: 'srgb',
+    }) as CanvasRenderingContext2D | null
     if (!ctx) throw new Error('Canvas 2D indisponivel neste navegador.')
-    ctx.drawImage(img, 0, 0)
-    const { data } = ctx.getImageData(0, 0, width, height)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(bitmap, 0, 0)
+    const { data } = ctx.getImageData(0, 0, width, height, { colorSpace: 'srgb' })
     const layer = new Uint16Array(width * height)
     for (let i = 0; i < layer.length; i++) {
       layer[i] = data[i * 4] | (data[i * 4 + 1] << 8)
     }
     return layer
+  } finally {
+    if ('close' in bitmap) bitmap.close()
+  }
+}
+
+async function loadBitmap(source: Blob | string): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof source !== 'string' && typeof createImageBitmap === 'function') {
+    return createImageBitmap(source, {
+      colorSpaceConversion: 'none',
+      premultiplyAlpha: 'none',
+    })
+  }
+  const url = typeof source === 'string' ? source : URL.createObjectURL(source)
+  if (typeof createImageBitmap === 'function') {
+    const response = await fetch(url)
+    const blob = await response.blob()
+    try {
+      return await createImageBitmap(blob, {
+        colorSpaceConversion: 'none',
+        premultiplyAlpha: 'none',
+      })
+    } finally {
+      if (typeof source !== 'string') URL.revokeObjectURL(url)
+    }
+  }
+  try {
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('Camada ilegivel'))
+      el.src = url
+    })
   } finally {
     if (typeof source !== 'string') URL.revokeObjectURL(url)
   }
@@ -156,6 +195,8 @@ export interface Draft {
   world: World
   territory: Blob
   biome: Blob
+  /** A costa editada. Ausente em rascunho antigo, feito antes dela existir. */
+  land?: Blob
   savedAt: number
 }
 
@@ -164,9 +205,10 @@ export async function saveDraft(
   world: World,
   territory: Blob,
   biome: Blob,
+  land: Blob,
 ): Promise<void> {
   try {
-    await idbPut('draft', { world, territory, biome, savedAt: Date.now() })
+    await idbPut('draft', { world, territory, biome, land, savedAt: Date.now() })
   } catch {
     // Sem IndexedDB o usuario ainda pode salvar no projeto manualmente.
   }
@@ -207,7 +249,7 @@ export async function fetchWorld(): Promise<World | null> {
 }
 
 export async function fetchLayer(
-  name: 'territory' | 'biome',
+  name: 'territory' | 'biome' | 'land',
   width: number,
   height: number,
 ): Promise<Uint16Array | null> {
@@ -230,6 +272,7 @@ export async function saveToProject(
   world: World,
   territory: Blob,
   biome: Blob,
+  land: Blob,
 ): Promise<boolean> {
   try {
     const put = (path: string, body: BodyInit, type: string) =>
@@ -238,6 +281,7 @@ export async function saveToProject(
       put('/__api/world', JSON.stringify(world, null, 2), 'application/json'),
       put('/__api/layer/territory', territory, 'image/png'),
       put('/__api/layer/biome', biome, 'image/png'),
+      put('/__api/layer/land', land, 'image/png'),
     ])
     return results.every((r) => r.ok)
   } catch {

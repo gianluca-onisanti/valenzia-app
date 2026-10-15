@@ -3,7 +3,7 @@ import type { ViewMode, ViewOptions } from '../lib/layers'
 
 interface ToolbarProps {
   worldName: string
-  /** O que o pincel vai aplicar, para o usuario nao pintar no escuro. */
+  /** O que a ferramenta vai aplicar, para ninguem pintar no escuro. */
   activeLabel: string | null
   activeColor: string | null
   view: ViewOptions
@@ -12,6 +12,10 @@ interface ToolbarProps {
   onToggleLabels: () => void
   showPois: boolean
   onTogglePois: () => void
+  erasing: boolean
+  onToggleErasing: () => void
+  globe: boolean
+  onToggleGlobe: () => void
   dirty: boolean
   status: string | null
   busy: boolean
@@ -63,11 +67,19 @@ export function Toolbar(props: ToolbarProps) {
       )}
 
       {props.activeLabel && (
-        <div className="active-paint" title="O que o pincel vai aplicar">
+        <div className="active-paint" title="O que a ferramenta vai aplicar">
           <span className="dot" style={{ background: props.activeColor ?? '#888' }} />
           <span className="small">{props.activeLabel}</span>
         </div>
       )}
+
+      <button
+        className={'chip' + (props.erasing ? ' active' : '')}
+        title="Apagar em vez de pintar (E). O laco e o balde e que marcam a area."
+        onClick={props.onToggleErasing}
+      >
+        Apagar
+      </button>
 
       <div className="spacer" />
 
@@ -85,6 +97,21 @@ export function Toolbar(props: ToolbarProps) {
           </button>
         ))}
       </div>
+
+      <button
+        className={'icon-button' + (props.globe ? ' active' : '')}
+        title="Ver como globo"
+        aria-pressed={props.globe}
+        onClick={props.onToggleGlobe}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor" strokeWidth="1.8">
+            <circle cx="12" cy="12" r="9" />
+            <ellipse cx="12" cy="12" rx="4" ry="9" />
+            <path d="M3 12h18M4.6 7h14.8M4.6 17h14.8" />
+          </g>
+        </svg>
+      </button>
 
       <div className="menu-wrap" ref={menuRef}>
         <button
@@ -172,6 +199,16 @@ export function Toolbar(props: ToolbarProps) {
             <label className="menu-toggle">
               <input type="checkbox" checked={props.showPois} onChange={props.onTogglePois} />
               Pontos
+            </label>
+            <label className="menu-toggle" title="Contorno tracado no lugar da imagem da costa">
+              <input
+                type="checkbox"
+                checked={props.view.coastLine}
+                onChange={() =>
+                  props.onView({ ...props.view, coastLine: !props.view.coastLine })
+                }
+              />
+              Costa vetorial
             </label>
           </div>
         )}

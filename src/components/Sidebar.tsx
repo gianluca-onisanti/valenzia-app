@@ -14,7 +14,7 @@ import type { SlotStats } from './MapView'
 import { BIOMES, BIOME_TYPES } from '../lib/biomes'
 import { POI_TYPES, POI_TYPE_LIST } from '../lib/poiTypes'
 
-type Tab = 'paises' | 'mares' | 'biomas' | 'pontos'
+type Tab = 'paises' | 'mares' | 'biomas' | 'pontos' | 'costa'
 
 interface SidebarProps {
   world: World
@@ -26,8 +26,10 @@ interface SidebarProps {
   poiOwners: Map<string, number>
   landPixels: number
   waterPixels: number
+  landColor: string
+  waterColor: string
   onSelect: (selection: Selection) => void
-  onPaintWith: (layer: PaintLayer, slot: number, onLand: boolean) => void
+  onPaintWith: (layer: PaintLayer, slot: number, onLand: boolean | null) => void
   onFocus: (x: number, y: number, scale?: number) => void
   onCreateTerritory: (kind: EntityKind) => void
   onCreateBiome: (type: BiomeType) => void
@@ -37,6 +39,7 @@ interface SidebarProps {
   onDeleteBiome: (slot: number) => void
   onUpdatePoi: (id: string, patch: Partial<Poi>) => void
   onDeletePoi: (id: string) => void
+  onIsolate: (slot: number) => void
   placingPoi: PoiType | null
   onPlacingPoi: (type: PoiType | null) => void
   visiblePoiTypes: Set<PoiType>
@@ -78,6 +81,8 @@ function ListPanel(props: SidebarProps) {
   const { world, activePaint } = props
   const [tab, setTab] = useState<Tab>('paises')
 
+  // Qual lado da costa esta armado (1 terra, 0 mar), ou -1 se nenhum.
+  const costaAtiva = activePaint.layer === 'land' ? activePaint.slot : -1
   const countries = world.territories.filter((t) => t.kind === 'country')
   const seas = world.territories.filter((t) => t.kind === 'sea')
 
@@ -89,8 +94,8 @@ function ListPanel(props: SidebarProps) {
       {list.length === 0 && (
         <p className="muted small hint">
           {kind === 'country'
-            ? 'Crie um pais e use o balde para preencher uma massa de terra inteira num clique.'
-            : 'Crie um mar e pinte a agua. A tinta nao sobe na terra.'}
+            ? 'Crie um pais e use o balde para preencher uma massa de terra inteira num clique, ou o laco para recortar a area na mao.'
+            : 'Crie um mar e marque a agua. A tinta nao sobe na terra.'}
         </p>
       )}
       <ul className="list">
@@ -110,7 +115,7 @@ function ListPanel(props: SidebarProps) {
               >
                 <span className="dot" style={{ background: entity.color }} />
                 <span className="row-name">{entity.name}</span>
-                {isPainting && <span className="badge badge--paint">pincel</span>}
+                {isPainting && <span className="badge badge--paint">ativo</span>}
                 <span className="muted small">
                   {stats
                     ? percent(
@@ -130,7 +135,7 @@ function ListPanel(props: SidebarProps) {
   return (
     <aside className="panel">
       <nav className="tabs">
-        {(['paises', 'mares', 'biomas', 'pontos'] as Tab[]).map((t) => (
+        {(['paises', 'mares', 'biomas', 'pontos', 'costa'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
             {t === 'paises'
               ? 'Paises'
@@ -138,7 +143,9 @@ function ListPanel(props: SidebarProps) {
                 ? 'Mares'
                 : t === 'biomas'
                   ? 'Biomas'
-                  : 'Pontos'}
+                  : t === 'pontos'
+                    ? 'Pontos'
+                    : 'Costa'}
           </button>
         ))}
       </nav>
@@ -150,7 +157,8 @@ function ListPanel(props: SidebarProps) {
         {tab === 'biomas' && (
           <>
             <p className="muted small hint">
-              Escolha um tipo para criar uma area nova, depois pinte no mapa.
+              Escolha um tipo para criar uma area nova, depois marque a area com
+              o laco ou o balde.
             </p>
             <div className="chips">
               {BIOME_TYPES.map((type) => (
@@ -177,7 +185,7 @@ function ListPanel(props: SidebarProps) {
                     >
                       <span className="dot" style={{ background: BIOMES[biome.type].color }} />
                       <span className="row-name">{biome.name}</span>
-                      {isPainting && <span className="badge badge--paint">pincel</span>}
+                      {isPainting && <span className="badge badge--paint">ativo</span>}
                       <span className="muted small">
                         {stats ? percent(stats.area, props.landPixels) : '--'}
                       </span>
@@ -186,6 +194,37 @@ function ListPanel(props: SidebarProps) {
                 )
               })}
             </ul>
+          </>
+        )}
+
+        {tab === 'costa' && (
+          <>
+            <p className="muted small hint">
+              Conserta a linha da costa. Util quando o desenho original fechou
+              um canal estreito: escolha <strong>Mar</strong> e contorne o canal
+              com o laco, ou <strong>Terra</strong> para aterrar. O balde tambem
+              vale aqui.
+            </p>
+            <div className="chips">
+              <button
+                className={'chip' + (costaAtiva === 1 ? ' active' : '')}
+                onClick={() => props.onPaintWith('land', 1, null)}
+              >
+                <span className="dot" style={{ background: props.landColor }} />
+                Terra
+              </button>
+              <button
+                className={'chip' + (costaAtiva === 0 ? ' active' : '')}
+                onClick={() => props.onPaintWith('land', 0, null)}
+              >
+                <span className="dot" style={{ background: props.waterColor }} />
+                Mar
+              </button>
+            </div>
+            <p className="muted small">
+              A tinta dos paises e dos biomas que ficar do lado errado sai
+              junto, no mesmo desfazer. {percent(props.landPixels, props.landPixels + props.waterPixels)} do mapa e terra.
+            </p>
           </>
         )}
 
@@ -267,27 +306,33 @@ function DetailPanel(props: SidebarProps & { selected: Territory | BiomeArea | P
 function DetailHead({
   onBack,
   backLabel,
+  action,
   children,
 }: {
   onBack: () => void
   backLabel: string
+  /** Botao opcional na ponta direita, na mesma linha do voltar. */
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <header className="detail-head">
-      <button className="back" onClick={onBack}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            d="M14 5l-7 7 7 7"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        {backLabel}
-      </button>
+      <div className="detail-top">
+        <button className="back" onClick={onBack}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M14 5l-7 7 7 7"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {backLabel}
+        </button>
+        {action}
+      </div>
       {children}
     </header>
   )
@@ -302,7 +347,32 @@ function TerritoryDetail(
 
   return (
     <aside className="panel">
-      <DetailHead onBack={props.onBack} backLabel={t.kind === 'country' ? 'Paises' : 'Mares'}>
+      <DetailHead
+        onBack={props.onBack}
+        backLabel={t.kind === 'country' ? 'Paises' : 'Mares'}
+        action={
+          <button
+            className="icon-button"
+            disabled={!stats}
+            aria-label={'Ver ' + t.name + ' isoladamente'}
+            title={
+              stats ? 'Ver isoladamente, sem vizinhos nem mar' : 'Pinte o territorio primeiro'
+            }
+            onClick={() => props.onIsolate(t.slot)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6-10-6-10-6z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinejoin="round"
+              />
+              <circle cx="12" cy="12" r="3.1" fill="currentColor" />
+            </svg>
+          </button>
+        }
+      >
         <input
           className="title-input"
           value={t.name}

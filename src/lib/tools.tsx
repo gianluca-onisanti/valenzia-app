@@ -69,39 +69,6 @@ export const TOOLS: ToolInfo[] = [
       </g>
     ),
   },
-  {
-    id: 'brush',
-    label: 'Pincel',
-    hint: 'Pinta por cima; a tinta para sozinha na costa',
-    shortcut: 'B',
-    icon: (
-      <>
-        <path
-          d="M18.5 3.2a2.4 2.4 0 013.3 3.4l-8.2 8.2-3.4-3.4z"
-          fill="currentColor"
-        />
-        <path
-          d="M9.4 12.3l2.3 2.3c0 2.6-1.6 4.6-4.4 4.6-1.2 0-1.9.6-2.6 1.2-.5-2.1-1.1-2.6-2.7-3.1 1.5-1 2-1.8 2.2-3 .3-1.4 1.6-2.3 3.1-2.2z"
-          fill="currentColor"
-        />
-      </>
-    ),
-  },
-  {
-    id: 'eraser',
-    label: 'Borracha',
-    hint: 'Devolve a area para "sem dono"',
-    shortcut: 'E',
-    icon: (
-      <>
-        <path
-          d="M8.6 20H6.2l-3-3a2 2 0 010-2.8l9-9a2 2 0 012.8 0l4.6 4.6a2 2 0 010 2.8L12.8 20z"
-          fill="currentColor"
-        />
-        <path d="M9 20h12" {...stroke} />
-      </>
-    ),
-  },
 ]
 
 export const TOOL_BY_ID = new Map(TOOLS.map((t) => [t.id, t]))

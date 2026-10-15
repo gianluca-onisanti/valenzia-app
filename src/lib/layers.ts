@@ -7,8 +7,14 @@ import type { Rect } from '../types'
 export interface MapBase {
   width: number
   height: number
-  /** 1 = terra, 0 = agua, indexado por `y * width + x`. */
-  land: Uint8Array
+  /**
+   * 1 = terra, 0 = agua, indexado por `y * width + x`.
+   *
+   * Deixou de ser so leitura: a costa tambem e editavel, para consertar
+   * canal estreito que o desenho original fechou. E do mesmo tipo das outras
+   * camadas justamente para reaproveitar pincel, balde, laco e desfazer.
+   */
+  land: Uint16Array
   landColor: string
   waterColor: string
   coast: HTMLImageElement
@@ -107,90 +113,6 @@ export class Journal {
 
 /* ------------------------------------------------------------- ferramentas */
 
-/**
- * Carimba um disco de tinta. `onLand` decide em que metade do mundo a tinta
- * pega: paises e biomas so na terra, mares so na agua. Devolve a area que
- * mudou de verdade, ou null se nada mudou.
- */
-export function stampDisc(
-  target: Uint16Array,
-  base: MapBase,
-  cx: number,
-  cy: number,
-  radius: number,
-  value: number,
-  onLand: boolean,
-  journal?: Journal,
-): Rect | null {
-  const { width, height, land } = base
-  const wanted = onLand ? 1 : 0
-  const x0 = Math.max(0, Math.floor(cx - radius))
-  const x1 = Math.min(width - 1, Math.ceil(cx + radius))
-  const y0 = Math.max(0, Math.floor(cy - radius))
-  const y1 = Math.min(height - 1, Math.ceil(cy + radius))
-  const r2 = radius * radius
-  let dirty: Rect | null = null
-
-  for (let y = y0; y <= y1; y++) {
-    const dy = y - cy
-    const row = y * width
-    for (let x = x0; x <= x1; x++) {
-      const dx = x - cx
-      if (dx * dx + dy * dy > r2) continue
-      const i = row + x
-      if (land[i] !== wanted || target[i] === value) continue
-      journal?.record(i, target[i])
-      target[i] = value
-      if (!dirty) dirty = rectOf(x, y, x, y)
-      else {
-        if (x < dirty.x0) dirty.x0 = x
-        if (x > dirty.x1) dirty.x1 = x
-        if (y < dirty.y0) dirty.y0 = y
-        if (y > dirty.y1) dirty.y1 = y
-      }
-    }
-  }
-  return dirty
-}
-
-/**
- * Liga dois pontos com discos. Sem isso o traco sai pontilhado quando o mouse
- * se move rapido, porque o navegador nao entrega todos os pontos do caminho.
- */
-export function stampStroke(
-  target: Uint16Array,
-  base: MapBase,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number,
-  radius: number,
-  value: number,
-  onLand: boolean,
-  journal?: Journal,
-): Rect | null {
-  const dist = Math.hypot(toX - fromX, toY - fromY)
-  const steps = Math.max(1, Math.ceil(dist / Math.max(1, radius * 0.4)))
-  let dirty: Rect | null = null
-  for (let s = 0; s <= steps; s++) {
-    const t = s / steps
-    dirty = unionRect(
-      dirty,
-      stampDisc(
-        target,
-        base,
-        fromX + (toX - fromX) * t,
-        fromY + (toY - fromY) * t,
-        radius,
-        value,
-        onLand,
-        journal,
-      ),
-    )
-  }
-  return dirty
-}
-
 let scratchQueue: Int32Array | null = null
 
 /**
@@ -205,7 +127,7 @@ export function bucketFill(
   x: number,
   y: number,
   value: number,
-  onLand: boolean,
+  onLand: boolean | null,
   journal?: Journal,
 ): Rect | null {
   const { width, height, land } = base
@@ -215,8 +137,8 @@ export function bucketFill(
   if (px < 0 || py < 0 || px >= width || py >= height) return null
 
   const start = py * width + px
-  const wanted = onLand ? 1 : 0
-  if (land[start] !== wanted) return null
+  const wanted = onLand === null ? -1 : onLand ? 1 : 0
+  if (wanted >= 0 && land[start] !== wanted) return null
   const from = target[start]
   if (from === value) return null
 
@@ -240,22 +162,22 @@ export function bucketFill(
     if (cy < dirty.y0) dirty.y0 = cy
     if (cy > dirty.y1) dirty.y1 = cy
 
-    if (cx > 0 && target[p - 1] === from && land[p - 1] === wanted) {
+    if (cx > 0 && target[p - 1] === from && (wanted < 0 || land[p - 1] === wanted)) {
       journal?.record(p - 1, from)
       target[p - 1] = value
       queue[tail++] = p - 1
     }
-    if (cx < width - 1 && target[p + 1] === from && land[p + 1] === wanted) {
+    if (cx < width - 1 && target[p + 1] === from && (wanted < 0 || land[p + 1] === wanted)) {
       journal?.record(p + 1, from)
       target[p + 1] = value
       queue[tail++] = p + 1
     }
-    if (cy > 0 && target[p - width] === from && land[p - width] === wanted) {
+    if (cy > 0 && target[p - width] === from && (wanted < 0 || land[p - width] === wanted)) {
       journal?.record(p - width, from)
       target[p - width] = value
       queue[tail++] = p - width
     }
-    if (cy < height - 1 && target[p + width] === from && land[p + width] === wanted) {
+    if (cy < height - 1 && target[p + width] === from && (wanted < 0 || land[p + width] === wanted)) {
       journal?.record(p + width, from)
       target[p + width] = value
       queue[tail++] = p + width
@@ -281,7 +203,7 @@ export function fillPolygon(
   base: MapBase,
   points: { x: number; y: number }[],
   value: number,
-  onLand: boolean,
+  onLand: boolean | null,
   journal?: Journal,
 ): Rect | null {
   const { width, height, land } = base
@@ -371,7 +293,7 @@ export function fillPolygon(
     if (y < h - 1) push(p + w)
   }
 
-  const wanted = onLand ? 1 : 0
+  const wanted = onLand === null ? -1 : onLand ? 1 : 0
   let dirty: Rect | null = null
   for (let y = 0; y < h; y++) {
     const srcRow = (by0 + y) * width + bx0
@@ -379,7 +301,7 @@ export function fillPolygon(
     for (let x = 0; x < w; x++) {
       if (outside[localRow + x]) continue
       const i = srcRow + x
-      if (land[i] !== wanted || target[i] === value) continue
+      if ((wanted >= 0 && land[i] !== wanted) || target[i] === value) continue
       journal?.record(i, target[i])
       target[i] = value
       const gx = bx0 + x
@@ -394,6 +316,48 @@ export function fillPolygon(
     }
   }
   return dirty
+}
+
+/**
+ * Depois de mexer na costa, tira a tinta que ficou do lado errado.
+ *
+ * Carvar um canal no meio de um pais deixaria o pais pintado por cima da
+ * agua nova; virar mar em terra deixaria um mar pintado em terra firme. Como
+ * o estencil so vale na hora de pintar, a arrumacao tem de vir depois -- e so
+ * dentro do retangulo mexido, nunca no mapa inteiro.
+ */
+export function reconcileLand(
+  land: Uint16Array,
+  territory: Uint16Array,
+  biome: Uint16Array,
+  width: number,
+  rect: Rect,
+  isSea: (slot: number) => boolean,
+  journalTerritory?: Journal,
+  journalBiome?: Journal,
+): { territory: Rect | null; biome: Rect | null } {
+  let dirtyT: Rect | null = null
+  let dirtyB: Rect | null = null
+  for (let y = rect.y0; y <= rect.y1; y++) {
+    const row = y * width
+    for (let x = rect.x0; x <= rect.x1; x++) {
+      const i = row + x
+      const agua = land[i] === 0
+      const slot = territory[i]
+      if (slot !== 0 && agua !== isSea(slot)) {
+        journalTerritory?.record(i, slot)
+        territory[i] = 0
+        dirtyT = unionRect(dirtyT, rectOf(x, y, x, y))
+      }
+      // Bioma e coisa de terra firme: na agua, nao fica.
+      if (agua && biome[i] !== 0) {
+        journalBiome?.record(i, biome[i])
+        biome[i] = 0
+        dirtyB = unionRect(dirtyB, rectOf(x, y, x, y))
+      }
+    }
+  }
+  return { territory: dirtyT, biome: dirtyB }
 }
 
 /** Apaga todos os pixels de um slot. Usado ao excluir um pais ou bioma. */
@@ -502,6 +466,14 @@ export type ViewMode = 'politica' | 'biomas' | 'mista'
 export interface ViewOptions {
   mode: ViewMode
   showBorders: boolean
+  /**
+   * Linha da costa tracada a partir da mascara de terra, em vez da imagem do
+   * desenho original. Vale para os dois caminhos de desenho: o vetor risca o
+   * contorno, e a textura raster escurece a fresta entre terra e agua. Tem de
+   * ser nos dois, senao a costa que o usuario desenhou sumiria toda vez que o
+   * mapa caisse na textura -- no arrasto, por exemplo.
+   */
+  coastLine: boolean
 }
 
 export function hexToRgb(hex: string): [number, number, number] {
@@ -509,6 +481,137 @@ export function hexToRgb(hex: string): [number, number, number] {
   const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
   const n = parseInt(full, 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+export interface ComposeResult {
+  /** Pixels desenhados (so conta quando ha recorte). */
+  pixels: number
+  /** Pixels de cada slot de bioma dentro do recorte. */
+  biomeArea: Map<number, number>
+}
+
+/**
+ * Coracao do desenho: calcula a cor final de cada pixel de uma regiao.
+ *
+ * O mapa inteiro e o recorte de um pais passam por aqui -- e por isso que o
+ * recorte sai identico ao que se ve no mapa, sem uma segunda receita de cores
+ * para manter sincronizada. A unica diferenca e `isolateSlot`: com ele, tudo
+ * que nao for daquele territorio sai transparente.
+ */
+function composeInto(
+  out: Uint8ClampedArray,
+  base: MapBase,
+  territory: Uint16Array,
+  biome: Uint16Array,
+  palette: Palette,
+  view: ViewOptions,
+  srcX0: number,
+  srcY0: number,
+  w: number,
+  h: number,
+  isolateSlot: number,
+): ComposeResult {
+  const { width, height, land } = base
+  const [lr, lg, lb] = palette.land
+  const [wr, wg, wb] = palette.water
+  const result: ComposeResult = { pixels: 0, biomeArea: new Map() }
+
+  const showTerritory = view.mode !== 'biomas'
+  const showBiomes = view.mode !== 'politica'
+  // A hachura existe para deixar a cor do pais aparecer por baixo. Na visao
+  // de biomas nao ha pais embaixo, entao a cor entra chapada.
+  const hatched = view.mode === 'mista'
+  const biomeMix = hatched ? 65 : 88
+
+  for (let y = 0; y < h; y++) {
+    const row = (srcY0 + y) * width + srcX0
+    const dstRow = y * w
+    for (let x = 0; x < w; x++) {
+      const i = row + x
+      const slot = territory[i]
+      const o = (dstRow + x) * 4
+
+      if (isolateSlot !== 0 && slot !== isolateSlot) {
+        out[o + 3] = 0
+        continue
+      }
+      result.pixels++
+
+      const isLand = land[i] === 1
+      let r = isLand ? lr : wr
+      let g = isLand ? lg : wg
+      let b = isLand ? lb : wb
+
+      // Slot sem cor na paleta e tinta orfa (a ficha sumiu num import, por
+      // exemplo). Pular em vez de ler fora do array evita pintar de preto.
+      if (slot !== 0 && showTerritory && slot * 3 + 2 < palette.territory.length) {
+        const t = slot * 3
+        // Mistura forte, mas deixa passar um pouco do verde/azul do mundo.
+        r = (r * 22 + palette.territory[t] * 78) / 100
+        g = (g * 22 + palette.territory[t + 1] * 78) / 100
+        b = (b * 22 + palette.territory[t + 2] * 78) / 100
+      }
+
+      const bio = biome[i]
+      if (bio !== 0 && isolateSlot !== 0) {
+        result.biomeArea.set(bio, (result.biomeArea.get(bio) ?? 0) + 1)
+      }
+      if (showBiomes) {
+        const gx = srcX0 + x
+        const gy = srcY0 + y
+        // Faixa diagonal larga: nao cria moire quando o mapa e visto de longe.
+        if (
+          bio !== 0 &&
+          bio * 3 + 2 < palette.biome.length &&
+          (!hatched || ((gx + gy) & 15) < 7)
+        ) {
+          const p = bio * 3
+          const keep = 100 - biomeMix
+          r = (r * keep + palette.biome[p] * biomeMix) / 100
+          g = (g * keep + palette.biome[p + 1] * biomeMix) / 100
+          b = (b * keep + palette.biome[p + 2] * biomeMix) / 100
+        }
+      }
+
+      // A fresta entre terra e agua, direto da mascara: acompanha a costa
+      // editada sem depender da imagem antiga.
+      if (view.coastLine) {
+        const px = srcX0 + x
+        const py = srcY0 + y
+        const beira =
+          (px > 0 && land[i - 1] !== land[i]) ||
+          (px < width - 1 && land[i + 1] !== land[i]) ||
+          (py > 0 && land[i - width] !== land[i]) ||
+          (py < height - 1 && land[i + width] !== land[i])
+        if (beira) {
+          r *= 0.42
+          g *= 0.42
+          b *= 0.42
+        }
+      }
+
+      if (view.showBorders && slot !== 0) {
+        const px = srcX0 + x
+        const py = srcY0 + y
+        const differs =
+          (px > 0 && territory[i - 1] !== slot) ||
+          (px < width - 1 && territory[i + 1] !== slot) ||
+          (py > 0 && territory[i - width] !== slot) ||
+          (py < height - 1 && territory[i + width] !== slot)
+        if (differs) {
+          r *= 0.45
+          g *= 0.45
+          b *= 0.45
+        }
+      }
+
+      out[o] = r
+      out[o + 1] = g
+      out[o + 2] = b
+      out[o + 3] = 255
+    }
+  }
+  return result
 }
 
 /**
@@ -525,77 +628,221 @@ export function paintComposite(
   view: ViewOptions,
   rect: Rect,
 ): void {
-  const { width, height, land } = base
   const x0 = Math.max(0, rect.x0)
   const y0 = Math.max(0, rect.y0)
-  const x1 = Math.min(width - 1, rect.x1)
-  const y1 = Math.min(height - 1, rect.y1)
+  const x1 = Math.min(base.width - 1, rect.x1)
+  const y1 = Math.min(base.height - 1, rect.y1)
   const w = x1 - x0 + 1
   const h = y1 - y0 + 1
   if (w <= 0 || h <= 0) return
 
   const image = ctx.createImageData(w, h)
-  const out = image.data
-  const [lr, lg, lb] = palette.land
-  const [wr, wg, wb] = palette.water
+  composeInto(image.data, base, territory, biome, palette, view, x0, y0, w, h, 0)
+  ctx.putImageData(image, x0, y0)
+}
 
-  const showTerritory = view.mode !== 'biomas'
-  const showBiomes = view.mode !== 'politica'
-  // A hachura existe para deixar a cor do pais aparecer por baixo. Na visao
-  // de biomas nao ha pais embaixo, entao a cor entra chapada.
-  const hatched = view.mode === 'mista'
-  const biomeMix = hatched ? 65 : 88
+/* --------------------------------------------------------------- faxina */
 
+export interface CleanReport {
+  /** Pixels isolados que voltaram a concordar com a vizinhanca. */
+  repaired: number
+  /** Pixels removidos por estarem em manchas pequenas demais. */
+  removed: number
+  /** Slots que sobraram na camada mas nao existem no mundo. */
+  orphans: Map<number, number>
+}
+
+/**
+ * Fecha frestas de 1 pixel deixadas pela ultima pincelada.
+ *
+ * Desenhar terra encostada na terra que ja existia quase sempre deixa um fio
+ * de agua entre as duas: o contorno enxerga duas ilhas e risca a costa no meio
+ * do continente, que foi exatamente o que apareceu em uso. A regra aqui e
+ * direcional -- quem acabou de ser pintado vence a fresta: pintando terra,
+ * fios de agua somem; pintando mar, fios de terra somem. Assim um canal
+ * estreito feito de proposito continua de pe, desde que tenha 2px.
+ *
+ * Le de uma copia: sem isso um vao de 2px fecharia em cascata, coluna a
+ * coluna, e o canal sumiria junto.
+ */
+export function closeSeams(
+  layer: Uint16Array,
+  width: number,
+  height: number,
+  rect: Rect,
+  value: number,
+  journal?: Journal,
+): number {
+  const x0 = Math.max(0, rect.x0)
+  const y0 = Math.max(0, rect.y0)
+  const x1 = Math.min(width - 1, rect.x1)
+  const y1 = Math.min(height - 1, rect.y1)
+  if (x1 < x0 || y1 < y0) return 0
+
+  const w = x1 - x0 + 1
+  const h = y1 - y0 + 1
+  const before = new Uint16Array(w * h)
+  for (let y = 0; y < h; y++) {
+    before.set(layer.subarray((y0 + y) * width + x0, (y0 + y) * width + x1 + 1), y * w)
+  }
+  const at = (x: number, y: number) =>
+    x >= x0 && x <= x1 && y >= y0 && y <= y1
+      ? before[(y - y0) * w + (x - x0)]
+      : layer[y * width + x]
+
+  let changed = 0
   for (let y = y0; y <= y1; y++) {
-    const row = y * width
-    const dstRow = (y - y0) * w
     for (let x = x0; x <= x1; x++) {
-      const i = row + x
-      const isLand = land[i] === 1
-      let r = isLand ? lr : wr
-      let g = isLand ? lg : wg
-      let b = isLand ? lb : wb
-
-      const slot = territory[i]
-      if (slot !== 0 && showTerritory) {
-        const o = slot * 3
-        // Mistura forte, mas deixa passar um pouco do verde/azul do mundo.
-        r = (r * 22 + palette.territory[o] * 78) / 100
-        g = (g * 22 + palette.territory[o + 1] * 78) / 100
-        b = (b * 22 + palette.territory[o + 2] * 78) / 100
-      }
-
-      if (showBiomes) {
-        const bio = biome[i]
-        // Faixa diagonal larga: nao cria moire quando o mapa e visto de longe.
-        if (bio !== 0 && (!hatched || ((x + y) & 15) < 7)) {
-          const o = bio * 3
-          const keep = 100 - biomeMix
-          r = (r * keep + palette.biome[o] * biomeMix) / 100
-          g = (g * keep + palette.biome[o + 1] * biomeMix) / 100
-          b = (b * keep + palette.biome[o + 2] * biomeMix) / 100
-        }
-      }
-
-      if (view.showBorders && slot !== 0) {
-        const differs =
-          (x > 0 && territory[i - 1] !== slot) ||
-          (x < width - 1 && territory[i + 1] !== slot) ||
-          (y > 0 && territory[i - width] !== slot) ||
-          (y < height - 1 && territory[i + width] !== slot)
-        if (differs) {
-          r *= 0.45
-          g *= 0.45
-          b *= 0.45
-        }
-      }
-
-      const o = (dstRow + (x - x0)) * 4
-      out[o] = r
-      out[o + 1] = g
-      out[o + 2] = b
-      out[o + 3] = 255
+      if (at(x, y) === value) continue
+      const entreColunas =
+        x > 0 && x < width - 1 && at(x - 1, y) === value && at(x + 1, y) === value
+      const entreLinhas =
+        y > 0 && y < height - 1 && at(x, y - 1) === value && at(x, y + 1) === value
+      if (!entreColunas && !entreLinhas) continue
+      const i = y * width + x
+      journal?.record(i, layer[i])
+      layer[i] = value
+      changed++
     }
   }
-  ctx.putImageData(image, x0, y0)
+  return changed
+}
+
+/**
+ * Mediana de 1 pixel dentro de um retangulo: se os quatro vizinhos concordam
+ * entre si e discordam do pixel, ele cede.
+ *
+ * E o que fecha a emenda quando se desenha terra encostada na terra que ja
+ * existia: por um pixel de agua que sobre entre as duas, o contorno enxerga
+ * duas ilhas e risca a costa no meio do continente. Depois do remendo, o
+ * traco contorna a area inteira, que e o que o olho espera.
+ *
+ * Le de uma copia, entao o resultado nao depende da ordem da varredura.
+ */
+export function medianPass(
+  layer: Uint16Array,
+  width: number,
+  height: number,
+  rect: Rect,
+  journal?: Journal,
+): number {
+  const x0 = Math.max(0, rect.x0)
+  const y0 = Math.max(0, rect.y0)
+  const x1 = Math.min(width - 1, rect.x1)
+  const y1 = Math.min(height - 1, rect.y1)
+  if (x1 < x0 || y1 < y0) return 0
+
+  const w = x1 - x0 + 1
+  const h = y1 - y0 + 1
+  const before = new Uint16Array(w * h)
+  for (let y = 0; y < h; y++) {
+    before.set(layer.subarray((y0 + y) * width + x0, (y0 + y) * width + x1 + 1), y * w)
+  }
+  const at = (x: number, y: number) =>
+    x >= x0 && x <= x1 && y >= y0 && y <= y1
+      ? before[(y - y0) * w + (x - x0)]
+      : layer[y * width + x]
+
+  let changed = 0
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = y * width + x
+      const v = at(x, y)
+      let first = -1
+      let agree = true
+      let seen = 0
+      const look = (u: number) => {
+        if (first < 0) first = u
+        else if (u !== first) agree = false
+        seen++
+      }
+      if (x > 0) look(at(x - 1, y))
+      if (x < width - 1) look(at(x + 1, y))
+      if (y > 0) look(at(x, y - 1))
+      if (y < height - 1) look(at(x, y + 1))
+      if (agree && seen >= 2 && first !== v) {
+        journal?.record(i, layer[i])
+        layer[i] = first
+        changed++
+      }
+    }
+  }
+  return changed
+}
+
+/**
+ * Tira a sujeira de uma camada recem-carregada.
+ *
+ * Um PNG que passa pelo canvas pode voltar com alguns pixels trocados em mais
+ * ou menos um -- poucos, mas espalhados pelo mapa inteiro. Como o valor do
+ * pixel aqui nao e cor e sim o numero do dono, um unico bit errado inventa um
+ * pais no meio do oceano: a area fica errada, a caixa do territorio estoura
+ * para o mapa todo e o recorte isolado vira uma chuva de pontinhos.
+ *
+ * Dois passes resolvem:
+ *  1. mediana de 1 pixel -- se os vizinhos concordam entre si e discordam do
+ *     pixel, ele cede. Tira pinta solta e tapa furo de 1px dentro do pais.
+ *  2. despeckle -- manchas menores que `minComponent` somem. Nenhum pincel
+ *     desta ferramenta desenha algo tao pequeno.
+ */
+export function cleanLayer(
+  layer: Uint16Array,
+  width: number,
+  height: number,
+  validSlots: Iterable<number> = [],
+  minComponent = 8,
+): CleanReport {
+  const report: CleanReport = { repaired: 0, removed: 0, orphans: new Map() }
+
+  report.repaired = medianPass(layer, width, height, rectOf(0, 0, width - 1, height - 1))
+
+  const total = width * height
+  const seen = new Uint8Array(total)
+  const queue = new Int32Array(total)
+  const members = new Int32Array(total)
+  for (let start = 0; start < total; start++) {
+    if (layer[start] === 0 || seen[start]) continue
+    const slot = layer[start]
+    let head = 0
+    let tail = 0
+    let n = 0
+    queue[tail++] = start
+    seen[start] = 1
+    while (head < tail) {
+      const p = queue[head++]
+      members[n++] = p
+      const px = p % width
+      const py = (p - px) / width
+      if (px > 0 && layer[p - 1] === slot && !seen[p - 1]) {
+        seen[p - 1] = 1
+        queue[tail++] = p - 1
+      }
+      if (px < width - 1 && layer[p + 1] === slot && !seen[p + 1]) {
+        seen[p + 1] = 1
+        queue[tail++] = p + 1
+      }
+      if (py > 0 && layer[p - width] === slot && !seen[p - width]) {
+        seen[p - width] = 1
+        queue[tail++] = p - width
+      }
+      if (py < height - 1 && layer[p + width] === slot && !seen[p + width]) {
+        seen[p + width] = 1
+        queue[tail++] = p + width
+      }
+    }
+    if (n < minComponent) {
+      for (let k = 0; k < n; k++) layer[members[k]] = 0
+      report.removed += n
+    }
+  }
+
+  // Tinta sem dono: nao apaga, so avisa. Pode ser trabalho de verdade que
+  // perdeu a ficha num import, e apagar em silencio seria pior.
+  const valid = new Set(validSlots)
+  for (let i = 0; i < total; i++) {
+    const slot = layer[i]
+    if (slot === 0 || valid.has(slot)) continue
+    report.orphans.set(slot, (report.orphans.get(slot) ?? 0) + 1)
+  }
+  return report
 }

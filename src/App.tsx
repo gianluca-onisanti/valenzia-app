@@ -3,12 +3,15 @@ import { MapView, type MapViewHandle, type SlotStats } from './components/MapVie
 import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { ToolDock } from './components/ToolDock'
+import { IsolatedView } from './components/IsolatedView'
+import { GlobeView } from './components/GlobeView'
 import { useMapBase } from './hooks/useMapBase'
 import { BIOMES, COUNTRY_COLORS, SEA_COLORS } from './lib/biomes'
 import { POI_TYPES, POI_TYPE_LIST } from './lib/poiTypes'
 import {
   Journal,
   anchorOf,
+  cleanLayer,
   clearSlot,
   hexToRgb,
   measureSlots,
@@ -33,6 +36,7 @@ import {
 import type {
   BiomeArea,
   BiomeType,
+  Rect,
   EntityKind,
   PaintLayer,
   Poi,
@@ -76,17 +80,24 @@ function Editor({ base }: { base: MapBase }) {
   const [status, setStatus] = useState<string | null>(null)
 
   const [selection, setSelection] = useState<Selection>(null)
+  /** Slot aberto no recorte isolado, ou null com o modal fechado. */
+  const [isolated, setIsolated] = useState<number | null>(null)
   // Mover e o padrao: so navega, nao altera nada do mundo por acidente.
   const [tool, setTool] = useState<Tool>('move')
-  const [brushSize, setBrushSize] = useState(28)
+  /** O globo e so visualizacao: o editor continua montado por tras. */
+  const [globe, setGlobe] = useState(false)
+  const [globeTexture, setGlobeTexture] = useState<HTMLCanvasElement | null>(null)
+  /** Apagar e alvo de pintura: o laco e o balde e que dizem onde. */
+  const [erasing, setErasing] = useState(false)
   const [activePaint, setActivePaint] = useState<{
     layer: PaintLayer
     slot: number
-    onLand: boolean
+    onLand: boolean | null
   }>({ layer: 'territory', slot: 0, onLand: true })
   const [view, setView] = useState<ViewOptions>({
     mode: 'politica',
     showBorders: true,
+    coastLine: true,
   })
   const [showLabels, setShowLabels] = useState(true)
   const [showPois, setShowPois] = useState(true)
@@ -100,8 +111,11 @@ function Editor({ base }: { base: MapBase }) {
   const [historyDepth, setHistoryDepth] = useState(0)
   /** Sobe a cada remedicao: avisa que a pintura mudou de baixo dos pontos. */
   const [layerVersion, setLayerVersion] = useState(0)
+  /** So a costa: tracar a terra inteira custa caro, nao da para fazer a toa. */
+  const [landVersion, setLandVersion] = useState(0)
 
-  const history = useRef<{ journal: Journal; layer: PaintLayer }[]>([])
+  /** Um passo pode mexer em mais de uma camada: carvar mar apaga o pais. */
+  const history = useRef<{ journal: Journal; layer: PaintLayer }[][]>([])
   const statsTimer = useRef<number | null>(null)
   const draftTimer = useRef<number | null>(null)
 
@@ -109,21 +123,57 @@ function Editor({ base }: { base: MapBase }) {
     let n = 0
     for (let i = 0; i < base.land.length; i++) n += base.land[i]
     return n
-  }, [base.land])
+    // landVersion entra porque a mascara muda no lugar, sem nova identidade.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base.land, landVersion])
   const waterPixels = total - landPixels
 
   /* ------------------------------------------------------------- carregar */
   useEffect(() => {
     let cancelled = false
+    /**
+     * Passa um pano nas camadas antes de usa-las. Ver cleanLayer: o PNG pode
+     * voltar do canvas com pixels trocados em um, e um pixel trocado aqui e um
+     * pais inteiro inventado num ponto perdido do mapa.
+     */
+    function sweep(current: World): string | null {
+      const t = cleanLayer(
+        layers.territory,
+        base.width,
+        base.height,
+        current.territories.map((x) => x.slot),
+      )
+      const b = cleanLayer(
+        layers.biome,
+        base.width,
+        base.height,
+        current.biomes.map((x) => x.slot),
+      )
+      const sujeira = t.repaired + t.removed + b.repaired + b.removed
+      const orfas = t.orphans.size + b.orphans.size
+      const partes: string[] = []
+      if (sujeira > 0) partes.push('Limpei ' + sujeira + ' pixels soltos das camadas')
+      if (orfas > 0) {
+        const px = [...t.orphans.values(), ...b.orphans.values()].reduce((a, c) => a + c, 0)
+        partes.push(orfas + ' area(s) pintada(s) sem ficha (' + px + ' px) -- recrie a entidade ou apague')
+      }
+      return partes.length ? partes.join('. ') : null
+    }
+
     async function load() {
       const draft = await readDraft()
       if (draft && !cancelled) {
         try {
           layers.territory.set(await decodeLayer(draft.territory, base.width, base.height))
           layers.biome.set(await decodeLayer(draft.biome, base.width, base.height))
-          setWorld(normalizeWorld(draft.world))
+          if (draft.land) {
+            base.land.set(await decodeLayer(draft.land, base.width, base.height))
+            setLandVersion((v) => v + 1)
+          }
+          const restored = normalizeWorld(draft.world)
+          setWorld(restored)
           setDirty(true)
-          setStatus('Rascunho do navegador restaurado')
+          setStatus(sweep(restored) ?? 'Rascunho do navegador restaurado')
           setLoading(false)
           return
         } catch {
@@ -133,13 +183,24 @@ function Editor({ base }: { base: MapBase }) {
       const saved = await fetchWorld()
       if (cancelled) return
       if (saved) setWorld(saved)
-      const [t, b] = await Promise.all([
+      const [t, b, l] = await Promise.all([
         fetchLayer('territory', base.width, base.height),
         fetchLayer('biome', base.width, base.height),
+        // A costa editada, se existir, manda mais que a mascara do prepare.
+        fetchLayer('land', base.width, base.height),
       ])
       if (cancelled) return
       if (t) layers.territory.set(t)
       if (b) layers.biome.set(b)
+      if (l) {
+        base.land.set(l)
+        setLandVersion((v) => v + 1)
+      }
+      const note = sweep(saved ?? EMPTY_WORLD)
+      if (note) {
+        setStatus(note)
+        setDirty(true)
+      }
       setLoading(false)
     }
     void load()
@@ -213,11 +274,12 @@ function Editor({ base }: { base: MapBase }) {
     (nextWorld: World) => {
       if (draftTimer.current) clearTimeout(draftTimer.current)
       draftTimer.current = window.setTimeout(async () => {
-        const [t, b] = await Promise.all([
+        const [t, b, l] = await Promise.all([
           encodeLayer(layers.territory, base.width, base.height),
           encodeLayer(layers.biome, base.width, base.height),
+          encodeLayer(base.land, base.width, base.height),
         ])
-        await saveDraft(nextWorld, t, b)
+        await saveDraft(nextWorld, t, b, l)
       }, 4000)
     },
     [base.width, base.height, layers],
@@ -244,15 +306,21 @@ function Editor({ base }: { base: MapBase }) {
 
   /* ---------------------------------------------------------- pinturas */
   const onStrokeEnd = useCallback(
-    (journal: Journal, layer: PaintLayer) => {
-      history.current.push({ journal, layer })
-      let bytes = history.current.reduce((sum, e) => sum + e.journal.bytes, 0)
+    (parts: { journal: Journal; layer: PaintLayer }[]) => {
+      const uteis = parts.filter((p) => p.journal.size > 0)
+      if (uteis.length === 0) return
+      history.current.push(uteis)
+      let bytes = history.current.reduce(
+        (sum, step) => sum + step.reduce((n, p) => n + p.journal.bytes, 0),
+        0,
+      )
       while (history.current.length > 1 && bytes > HISTORY_BUDGET) {
-        bytes -= history.current[0].journal.bytes
-        history.current.shift()
+        const saiu = history.current.shift()
+        bytes -= saiu?.reduce((n, p) => n + p.journal.bytes, 0) ?? 0
       }
       setHistoryDepth(history.current.length)
       setDirty(true)
+      if (uteis.some((p) => p.layer === 'land')) setLandVersion((v) => v + 1)
       scheduleStats()
       scheduleDraft(world)
     },
@@ -260,15 +328,33 @@ function Editor({ base }: { base: MapBase }) {
   )
 
   const undo = useCallback(() => {
-    const entry = history.current.pop()
-    if (!entry) return
-    const layer = entry.layer === 'territory' ? layers.territory : layers.biome
-    entry.journal.revert(layer)
-    mapRef.current?.repaint(entry.journal.area(base.width, base.height))
+    const step = history.current.pop()
+    if (!step) return
+    let area: Rect | null = null
+    for (const parte of step) {
+      const layer =
+        parte.layer === 'territory'
+          ? layers.territory
+          : parte.layer === 'biome'
+            ? layers.biome
+            : base.land
+      parte.journal.revert(layer)
+      const r = parte.journal.area(base.width, base.height)
+      area = area && r
+        ? {
+            x0: Math.min(area.x0, r.x0),
+            y0: Math.min(area.y0, r.y0),
+            x1: Math.max(area.x1, r.x1),
+            y1: Math.max(area.y1, r.y1),
+          }
+        : (area ?? r)
+    }
+    mapRef.current?.repaint(area)
     setHistoryDepth(history.current.length)
     setDirty(true)
+    if (step.some((p) => p.layer === 'land')) setLandVersion((v) => v + 1)
     scheduleStats()
-  }, [layers, base.width, base.height, scheduleStats])
+  }, [layers, base, scheduleStats])
 
   /* ----------------------------------------------------------- entidades */
   const createTerritory = useCallback(
@@ -287,6 +373,7 @@ function Editor({ base }: { base: MapBase }) {
         }
         setSelection({ kind: 'territory', slot })
         setActivePaint({ layer: 'territory', slot, onLand: kind === 'country' })
+        setErasing(false)
         setTool('bucket')
         return { ...w, territories: [...w.territories, entity] }
       })
@@ -308,7 +395,8 @@ function Editor({ base }: { base: MapBase }) {
         }
         setSelection({ kind: 'biome', slot })
         setActivePaint({ layer: 'biome', slot, onLand: true })
-        setTool('brush')
+        setErasing(false)
+        setTool('lasso')
         return { ...w, biomes: [...w.biomes, entity] }
       })
     },
@@ -344,7 +432,7 @@ function Editor({ base }: { base: MapBase }) {
       const journal = new Journal()
       const dirtyRect = clearSlot(layer, base.width, slot, journal)
       if (journal.size > 0) {
-        history.current.push({ journal, layer: which })
+        history.current.push([{ journal, layer: which }])
         setHistoryDepth(history.current.length)
       }
       updateWorld((w) =>
@@ -353,6 +441,7 @@ function Editor({ base }: { base: MapBase }) {
           : { ...w, biomes: w.biomes.filter((b) => b.slot !== slot) },
       )
       setSelection(null)
+      setIsolated((current) => (which === 'territory' && current === slot ? null : current))
       setActivePaint((p) => (p.layer === which && p.slot === slot ? { ...p, slot: 0 } : p))
       if (dirtyRect) mapRef.current?.repaint(dirtyRect)
       scheduleStats()
@@ -420,11 +509,12 @@ function Editor({ base }: { base: MapBase }) {
   const save = useCallback(async () => {
     setBusy(true)
     try {
-      const [t, b] = await Promise.all([
+      const [t, b, l] = await Promise.all([
         encodeLayer(layers.territory, base.width, base.height),
         encodeLayer(layers.biome, base.width, base.height),
+        encodeLayer(base.land, base.width, base.height),
       ])
-      const ok = await saveToProject(world, t, b)
+      const ok = await saveToProject(world, t, b, l)
       if (ok) {
         setDirty(false)
         await clearDraft()
@@ -436,6 +526,7 @@ function Editor({ base }: { base: MapBase }) {
         )
         downloadBlob(t, 'territory.png')
         downloadBlob(b, 'biome.png')
+        downloadBlob(l, 'land.png')
         setStatus('Sem servidor de dev: baixei os arquivos')
       }
     } finally {
@@ -446,9 +537,10 @@ function Editor({ base }: { base: MapBase }) {
   const exportAll = useCallback(async () => {
     setBusy(true)
     try {
-      const [t, b] = await Promise.all([
+      const [t, b, l] = await Promise.all([
         encodeLayer(layers.territory, base.width, base.height),
         encodeLayer(layers.biome, base.width, base.height),
+        encodeLayer(base.land, base.width, base.height),
       ])
       downloadBlob(
         new Blob([JSON.stringify(world, null, 2)], { type: 'application/json' }),
@@ -456,7 +548,8 @@ function Editor({ base }: { base: MapBase }) {
       )
       downloadBlob(t, 'territory.png')
       downloadBlob(b, 'biome.png')
-      setStatus('Exportado: world.json + as duas camadas')
+      downloadBlob(l, 'land.png')
+      setStatus('Exportado: world.json + as tres camadas')
     } finally {
       setBusy(false)
     }
@@ -483,6 +576,16 @@ function Editor({ base }: { base: MapBase }) {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+      // Com o recorte aberto, o teclado e so dele: trocar de ferramenta por
+      // tras do modal deixaria o usuario pintando sem ver.
+      if (isolated !== null) {
+        if (event.key === 'Escape') setIsolated(null)
+        return
+      }
+      if (globe) {
+        if (event.key === 'Escape') setGlobe(false)
+        return
+      }
       if (event.key === 'Escape') {
         if (placingPoi) setPlacingPoi(null)
         else setSelection(null)
@@ -493,22 +596,19 @@ function Editor({ base }: { base: MapBase }) {
         undo()
         return
       }
-      if (event.key === '[') setBrushSize((s) => Math.max(2, Math.round(s * 0.8)))
-      if (event.key === ']') setBrushSize((s) => Math.min(160, Math.round(s * 1.25) + 1))
-      if (event.key === 'b') setTool('brush')
       if (event.key === 'g') setTool('bucket')
       if (event.key === 'l') setTool('lasso')
       if (event.key === '1') setView((v) => ({ ...v, mode: 'politica' }))
       if (event.key === '2') setView((v) => ({ ...v, mode: 'biomas' }))
       if (event.key === '3') setView((v) => ({ ...v, mode: 'mista' }))
-      if (event.key === 'e') setTool('eraser')
+      if (event.key === 'e') setErasing((v) => !v)
       if (event.key === 'v') setTool('select')
       if (event.key === 'm') setTool('move')
       if (event.key === 'Delete' && selection?.kind === 'poi') deletePoi(selection.id)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [placingPoi, undo, selection, deletePoi])
+  }, [placingPoi, undo, selection, deletePoi, isolated, globe])
 
   /* -------------------------------------------------------------- paleta */
   const palette: Palette = useMemo(() => {
@@ -539,14 +639,34 @@ function Editor({ base }: { base: MapBase }) {
   const activeEntity =
     activePaint.layer === 'territory'
       ? world.territories.find((t) => t.slot === activePaint.slot)
-      : world.biomes.find((b) => b.slot === activePaint.slot)
+      : activePaint.layer === 'biome'
+        ? world.biomes.find((b) => b.slot === activePaint.slot)
+        : undefined
 
-  const activeLabel = activeEntity?.name ?? null
-  const activeColor = activeEntity
-    ? 'color' in activeEntity
-      ? activeEntity.color
-      : BIOMES[activeEntity.type].color
-    : null
+  // Na costa nao ha ficha nenhuma: o que o pincel aplica e terra ou mar.
+  const pintandoCosta = activePaint.layer === 'land'
+  const activeLabel = pintandoCosta
+    ? activePaint.slot === 1
+      ? 'Terra'
+      : 'Mar'
+    : (activeEntity?.name ?? null)
+  const activeColor = pintandoCosta
+    ? activePaint.slot === 1
+      ? base.landColor
+      : base.waterColor
+    : activeEntity
+      ? 'color' in activeEntity
+        ? activeEntity.color
+        : BIOMES[activeEntity.type].color
+      : null
+
+  // O recorte so existe se o territorio ja tem tinta no mapa: sem pixels nao
+  // ha o que mostrar, e a bbox nem seria medida.
+  const isolatedEntity =
+    isolated === null ? null : (world.territories.find((t) => t.slot === isolated) ?? null)
+  const isolatedBox = isolated === null ? null : (territoryStats.get(isolated)?.bbox ?? null)
+  const isolatedPois =
+    isolated === null ? [] : world.pois.filter((p) => poiOwners.get(p.id) === isolated)
 
   if (loading) return <Splash title="Carregando" message="Montando as camadas..." />
 
@@ -562,6 +682,14 @@ function Editor({ base }: { base: MapBase }) {
         onToggleLabels={() => setShowLabels((v) => !v)}
         showPois={showPois}
         onTogglePois={() => setShowPois((v) => !v)}
+        erasing={erasing}
+        onToggleErasing={() => setErasing((v) => !v)}
+        globe={globe}
+        onToggleGlobe={() => {
+          // A textura do globo e a mesma que o mapa ja tem pronta na tela.
+          if (!globe) setGlobeTexture(mapRef.current?.texture() ?? null)
+          setGlobe((v) => !v)
+        }}
         dirty={dirty}
         status={status}
         busy={busy}
@@ -582,12 +710,14 @@ function Editor({ base }: { base: MapBase }) {
           world={world}
           palette={palette}
           paletteVersion={paletteVersion}
+          layerVersion={layerVersion}
+          landVersion={landVersion}
           view={view}
           tool={tool}
           paintLayer={activePaint.layer}
           activeSlot={activePaint.slot}
           paintOnLand={activePaint.onLand}
-          brushSize={brushSize}
+          erasing={erasing}
           selection={selection}
           territoryStats={territoryStats}
           onSelect={setSelection}
@@ -600,12 +730,23 @@ function Editor({ base }: { base: MapBase }) {
           showLabels={showLabels}
         />
 
-        <ToolDock
-          tool={tool}
-          onTool={setTool}
-          brushSize={brushSize}
-          onBrushSize={setBrushSize}
-        />
+        <ToolDock tool={tool} onTool={setTool} />
+
+        {globe && (
+          <GlobeView
+            base={base}
+            world={world}
+            source={globeTexture}
+            inkOverlay={!view.coastLine}
+            version={view.mode + view.showBorders + paletteVersion + ':' + layerVersion}
+            pois={showPois ? world.pois.filter((p) => visiblePoiTypes.has(p.type)) : []}
+            onSelectPoi={(id) => {
+              setGlobe(false)
+              setSelection({ kind: 'poi', id })
+            }}
+            onClose={() => setGlobe(false)}
+          />
+        )}
 
         <Sidebar
           world={world}
@@ -616,8 +757,15 @@ function Editor({ base }: { base: MapBase }) {
           poiOwners={poiOwners}
           landPixels={landPixels}
           waterPixels={waterPixels}
+          landColor={base.landColor}
+          waterColor={base.waterColor}
           onSelect={setSelection}
-          onPaintWith={(layer, slot, onLand) => setActivePaint({ layer, slot, onLand })}
+          onPaintWith={(layer, slot, onLand) => {
+            setActivePaint({ layer, slot, onLand })
+            setErasing(false)
+            // Escolher um lado da costa ja entrega o laco na mao.
+            if (layer === 'land') setTool('lasso')
+          }}
           onFocus={(x, y, scale) => mapRef.current?.focusOn(x, y, scale)}
           onCreateTerritory={createTerritory}
           onCreateBiome={createBiome}
@@ -627,6 +775,7 @@ function Editor({ base }: { base: MapBase }) {
           onDeleteBiome={(slot) => deleteEntity('biome', slot)}
           onUpdatePoi={updatePoi}
           onDeletePoi={deletePoi}
+          onIsolate={setIsolated}
           placingPoi={placingPoi}
           onPlacingPoi={armPoi}
           visiblePoiTypes={visiblePoiTypes}
@@ -640,6 +789,23 @@ function Editor({ base }: { base: MapBase }) {
           }
         />
       </div>
+
+      {isolatedEntity && isolatedBox && (
+        <IsolatedView
+          base={base}
+          territory={layers.territory}
+          biome={layers.biome}
+          view={view}
+          entity={isolatedEntity}
+          biomes={world.biomes}
+          pois={isolatedPois}
+          onClose={() => setIsolated(null)}
+          onSelectPoi={(id) => {
+            setIsolated(null)
+            setSelection({ kind: 'poi', id })
+          }}
+        />
+      )}
     </div>
   )
 }

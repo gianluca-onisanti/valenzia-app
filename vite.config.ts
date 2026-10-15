@@ -63,7 +63,7 @@ function projectWriter(): Plugin {
         if (req.method !== 'POST') return next()
         // O middleware recebe a url ja sem o prefixo: "/territory".
         const name = (req.url ?? '').replace(/^\/+/, '').split('?')[0]
-        if (name !== 'territory' && name !== 'biome') {
+        if (name !== 'territory' && name !== 'biome' && name !== 'land') {
           return fail(res, 404, 'Camada desconhecida: ' + name)
         }
         readBody(req)

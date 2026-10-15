@@ -5,19 +5,16 @@ import { TOOLS, TOOL_BY_ID } from '../lib/tools'
 interface ToolDockProps {
   tool: Tool
   onTool: (tool: Tool) => void
-  brushSize: number
-  onBrushSize: (size: number) => void
 }
 
 /**
  * Seletor de ferramenta flutuante, no canto inferior esquerdo. O botao mostra
  * sempre a ferramenta em uso; clicar abre a lista para cima.
  */
-export function ToolDock({ tool, onTool, brushSize, onBrushSize }: ToolDockProps) {
+export function ToolDock({ tool, onTool }: ToolDockProps) {
   const [open, setOpen] = useState(false)
   const dockRef = useRef<HTMLDivElement>(null)
   const current = TOOL_BY_ID.get(tool) ?? TOOLS[0]
-  const painting = tool === 'brush' || tool === 'eraser'
 
   // Fecha ao clicar fora ou com Esc, como qualquer menu flutuante.
   useEffect(() => {
@@ -59,22 +56,6 @@ export function ToolDock({ tool, onTool, brushSize, onBrushSize }: ToolDockProps
               <kbd>{t.shortcut}</kbd>
             </button>
           ))}
-        </div>
-      )}
-
-      {painting && (
-        <div className="dock-brush" title="Tamanho do pincel ( [ e ] )">
-          <svg viewBox="0 0 24 24" aria-hidden="true" className="dock-brush-icon">
-            <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
-          </svg>
-          <input
-            type="range"
-            min={2}
-            max={160}
-            value={brushSize}
-            onChange={(e) => onBrushSize(Number(e.target.value))}
-          />
-          <span className="dock-brush-num">{brushSize}</span>
         </div>
       )}
 

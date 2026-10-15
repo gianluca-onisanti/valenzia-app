@@ -21,16 +21,18 @@ import type {
 import {
   Journal,
   bucketFill,
+  closeSeams,
   fillPolygon,
   padRect,
+  reconcileLand,
   paintComposite,
   rectOf,
-  stampDisc,
-  stampStroke,
   type MapBase,
   type Palette,
   type ViewOptions,
 } from '../lib/layers'
+import { traceLayer, traceMask } from '../lib/trace'
+import { drawScene, toShape, type Scene, type Shape } from '../lib/vectorPaint'
 import { POI_TYPES } from '../lib/poiTypes'
 
 const MAX_SCALE = 12
@@ -48,6 +50,8 @@ export interface MapViewHandle {
   focusOn(x: number, y: number, scale?: number): void
   /** Repinta a textura: um retangulo, ou o mapa inteiro se vier null. */
   repaint(rect: Rect | null): void
+  /** A textura do mapa em tamanho real, para quem precisar dela pronta. */
+  texture(): HTMLCanvasElement | null
 }
 
 interface MapViewProps {
@@ -58,18 +62,24 @@ interface MapViewProps {
   palette: Palette
   /** Muda quando alguma cor e editada, forcando repintura total. */
   paletteVersion: number
+  /** Sobe quando a pintura assenta: hora de refazer os contornos. */
+  layerVersion: number
+  /** So a costa: tracar a terra inteira e caro demais para cada pincelada. */
+  landVersion: number
   view: ViewOptions
   tool: Tool
   paintLayer: PaintLayer
-  /** Slot que o pincel aplica; 0 apaga. */
+  /** Slot que a ferramenta aplica. */
   activeSlot: number
-  /** Mares pintam na agua; paises e biomas, na terra. */
-  paintOnLand: boolean
-  brushSize: number
+  /** Apagar e alvo, nao ferramenta: o laco e o balde e que marcam a area. */
+  erasing: boolean
+  /** Mares pintam na agua; paises e biomas, na terra; a costa, em todo lugar. */
+  paintOnLand: boolean | null
   selection: Selection
   territoryStats: Map<number, SlotStats>
   onSelect: (selection: Selection) => void
-  onStrokeEnd: (journal: Journal, layer: PaintLayer) => void
+  /** Um passo pode mexer em mais de uma camada: ver reconcileLand. */
+  onStrokeEnd: (parts: { journal: Journal; layer: PaintLayer }[]) => void
   placingPoi: PoiType | null
   onPlacePoi: (x: number, y: number) => void
   onMovePoi: (id: string, x: number, y: number) => void
@@ -93,12 +103,14 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     world,
     palette,
     paletteVersion,
+    layerVersion,
+    landVersion,
     view,
     tool,
     paintLayer,
     activeSlot,
+    erasing,
     paintOnLand,
-    brushSize,
     selection,
     territoryStats,
     onSelect,
@@ -124,6 +136,23 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   const [draggingPoi, setDraggingPoi] = useState<string | null>(null)
   /** Traco do laco em andamento, em coordenadas da imagem. */
   const lassoRef = useRef<{ x: number; y: number }[] | null>(null)
+  /** Enquanto a mao pinta, o contorno esta atrasado e a textura raster vale. */
+  const staleRef = useRef(true)
+  /**
+   * Enquanto o mapa esta sendo arrastado ou ampliado, vale a textura raster:
+   * ela custa um drawImage por quadro, enquanto o vetor refaz milhares de
+   * segmentos. Parou de mexer, o vetor volta e a imagem fica afiada.
+   */
+  const busyRef = useRef(false)
+  const busyTimer = useRef<number | null>(null)
+  const markBusy = useCallback(() => {
+    busyRef.current = true
+    if (busyTimer.current) clearTimeout(busyTimer.current)
+    busyTimer.current = window.setTimeout(() => {
+      busyRef.current = false
+      bumpFrame((n) => n + 1)
+    }, 140)
+  }, [])
   const [, bumpFrame] = useState(0)
   const animation = useRef<number | null>(null)
 
@@ -170,6 +199,9 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         ? padRect(rect, 2, base)
         : rectOf(0, 0, base.width - 1, base.height - 1)
       paintComposite(composite.ctx, base, territory, biome, palette, view, area)
+      // A pintura mudou: o contorno vetorial ficou velho ate a proxima
+      // tracagem, e ate la quem aparece na tela e a textura raster.
+      staleRef.current = true
       bumpFrame((n) => n + 1)
     },
     [base, territory, biome, palette, view],
@@ -236,6 +268,59 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     return { canvas, x: bbox.x0, y: bbox.y0 }
   }, [selection, territory, biome, territoryStats, base.width, base.height])
 
+  /* ------------------------------------------------------------- contornos */
+  const [landShape, setLandShape] = useState<Shape | null>(null)
+  const [shapes, setShapes] = useState<{
+    territory: Map<number, Shape>
+    biome: Map<number, Shape>
+  } | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    // A mascara de terra nunca muda: e tracada uma vez so, e em outro quadro,
+    // para a primeira tela nao esperar por ela.
+    const timer = setTimeout(() => {
+      const loops = traceMask(base.land, base.width, base.height)
+      if (!alive) return
+      setLandShape(toShape(loops))
+      bumpFrame((n) => n + 1)
+    }, 0)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [base, landVersion])
+
+  // Refaz os contornos quando a pintura assenta -- nunca durante a pincelada.
+  useEffect(() => {
+    const build = (layer: Uint16Array) => {
+      const out = new Map<number, Shape>()
+      for (const [slot, loops] of traceLayer(layer, base.width, base.height)) {
+        const shape = toShape(loops)
+        if (shape) out.set(slot, shape)
+      }
+      return out
+    }
+    setShapes({ territory: build(territory), biome: build(biome) })
+    staleRef.current = false
+    bumpFrame((n) => n + 1)
+  }, [layerVersion, territory, biome, base.width, base.height])
+
+  const scene: Scene | null = useMemo(() => {
+    if (!shapes) return null
+    const territories = []
+    for (const entity of world.territories) {
+      const shape = shapes.territory.get(entity.slot)
+      if (shape) territories.push({ entity, shape })
+    }
+    const biomes = []
+    for (const entity of world.biomes) {
+      const shape = shapes.biome.get(entity.slot)
+      if (shape) biomes.push({ entity, shape })
+    }
+    return { land: landShape, territories, biomes }
+  }, [shapes, landShape, world.territories, world.biomes])
+
   /* ---------------------------------------------------------------- desenho */
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -259,15 +344,24 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     ctx.scale(scale, scale)
     ctx.imageSmoothingEnabled = scale < 1
     ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(composite.canvas, 0, 0)
 
-    if (selectionMask) {
-      ctx.globalAlpha = 0.34
-      ctx.drawImage(selectionMask.canvas, selectionMask.x, selectionMask.y)
-      ctx.globalAlpha = 1
+    // Com os contornos em dia, o mapa sai em vetor: fronteira afiada em
+    // qualquer zoom. Durante a pincelada vale a textura raster, que acompanha
+    // a mao em tempo real.
+    const vector = scene && scene.land && !staleRef.current && !busyRef.current
+    if (vector) {
+      drawScene(ctx, scene, { base, view, scale, selection, coastline: view.coastLine })
+    } else {
+      ctx.drawImage(composite.canvas, 0, 0)
+      if (selectionMask) {
+        ctx.globalAlpha = 0.34
+        ctx.drawImage(selectionMask.canvas, selectionMask.x, selectionMask.y)
+        ctx.globalAlpha = 1
+      }
     }
 
-    ctx.drawImage(base.coast, 0, 0)
+    // Sem a costa vetorial, entra a imagem do desenho original.
+    if (!view.coastLine) ctx.drawImage(base.coast, 0, 0)
     ctx.restore()
 
     if (showLabels) {
@@ -319,23 +413,6 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       ctx.setLineDash([])
     }
 
-    // Anel do pincel: mostra o alcance da tinta antes de encostar.
-    if (cursor && (tool === 'brush' || tool === 'eraser')) {
-      ctx.beginPath()
-      ctx.arc(
-        cursor.x * scale + x,
-        cursor.y * scale + y,
-        Math.max(2, brushSize * scale),
-        0,
-        Math.PI * 2,
-      )
-      ctx.strokeStyle = 'rgba(0,0,0,0.75)'
-      ctx.lineWidth = 3
-      ctx.stroke()
-      ctx.strokeStyle = 'rgba(255,255,255,0.95)'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-    }
   })
 
   /* ------------------------------------------------------------- interacao */
@@ -363,13 +440,14 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
 
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {
+      markBusy()
       setViewport((vp) => {
         const next = clamp(vp.scale * factor, fitScale * MIN_ZOOM_FACTOR, MAX_SCALE)
         const ratio = next / vp.scale
         return { scale: next, x: cx - (cx - vp.x) * ratio, y: cy - (cy - vp.y) * ratio }
       })
     },
-    [fitScale],
+    [fitScale, markBusy],
   )
 
   useImperativeHandle(
@@ -378,6 +456,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       fit,
       zoomBy: (factor: number) => zoomAt(factor, size.w / 2, size.h / 2),
       repaint,
+      texture: () => compositeRef.current?.canvas ?? null,
       focusOn: (tx: number, ty: number, scale?: number) => {
         if (animation.current) cancelAnimationFrame(animation.current)
         const targetScale = scale ?? Math.max(viewport.scale, fitScale * 3)
@@ -421,26 +500,52 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   }, [zoomAt])
 
   const gesture = useRef({
-    mode: 'idle' as 'idle' | 'pan' | 'paint' | 'lasso',
+    mode: 'idle' as 'idle' | 'pan' | 'lasso',
     moved: false,
     startX: 0,
     startY: 0,
     originX: 0,
     originY: 0,
-    lastX: 0,
-    lastY: 0,
-    journal: null as Journal | null,
   })
 
-  const activeLayer = paintLayer === 'territory' ? territory : biome
-  const paintValue = tool === 'eraser' ? 0 : activeSlot
+  const activeLayer =
+    paintLayer === 'territory' ? territory : paintLayer === 'biome' ? biome : base.land
+  const paintValue = erasing ? 0 : activeSlot
+  const temTinta = erasing || activeSlot !== 0 || paintLayer === 'land'
+
+  /**
+   * Fecha a pincelada. Mexer na costa pode deixar pais pintado em cima de
+   * agua nova (ou mar em terra nova): a arrumacao entra no mesmo passo, para
+   * um Ctrl+Z desfazer tudo de uma vez.
+   */
+  const finishStroke = (journal: Journal, dirty: Rect | null) => {
+    const parts: { journal: Journal; layer: PaintLayer }[] = [{ journal, layer: paintLayer }]
+    if (paintLayer === 'land' && dirty) {
+      const area = padRect(dirty, 2, base)
+      // Fecha a emenda com a costa que ja existia: sem isso, um fio de agua
+      // preso entre a terra velha e a nova vira uma linha no meio do
+      // continente. Entra no mesmo diario, entao o desfazer leva tudo.
+      if (closeSeams(base.land, base.width, base.height, area, paintValue, journal) > 0) {
+        repaint(area)
+      }
+      const mares = new Set(
+        world.territories.filter((t) => t.kind === 'sea').map((t) => t.slot),
+      )
+      const jt = new Journal()
+      const jb = new Journal()
+      reconcileLand(base.land, territory, biome, base.width, area, (slot) => mares.has(slot), jt, jb)
+      if (jt.size > 0) parts.push({ journal: jt, layer: 'territory' })
+      if (jb.size > 0) parts.push({ journal: jb, layer: 'biome' })
+      if (jt.size > 0 || jb.size > 0) repaint(area)
+    }
+    onStrokeEnd(parts)
+  }
 
   const onPointerDown = (event: React.PointerEvent) => {
     const g = gesture.current
     ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
     const armed = event.button === 0 && !placingPoi
-    const wantsPaint = armed && (tool === 'brush' || tool === 'eraser')
-    const wantsLasso = armed && tool === 'lasso' && activeSlot !== 0
+    const wantsLasso = armed && tool === 'lasso' && temTinta
 
     if (wantsLasso) {
       g.mode = 'lasso'
@@ -448,35 +553,13 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       return
     }
 
-    // Botao do meio e o direito arrastam o mapa mesmo com o pincel ativo.
-    if (!wantsPaint) {
-      g.mode = 'pan'
-      g.moved = false
-      g.startX = event.clientX
-      g.startY = event.clientY
-      g.originX = viewport.x
-      g.originY = viewport.y
-      return
-    }
-
-    if (tool === 'brush' && activeSlot === 0) return
-
-    const { x, y } = toImage(event.clientX, event.clientY)
-    g.mode = 'paint'
-    g.lastX = x
-    g.lastY = y
-    g.journal = new Journal()
-    const dirty = stampDisc(
-      activeLayer,
-      base,
-      x,
-      y,
-      brushSize,
-      paintValue,
-      paintOnLand,
-      g.journal,
-    )
-    if (dirty) repaint(dirty)
+    // Sem o pincel livre, qualquer outro clique arrasta o mapa.
+    g.mode = 'pan'
+    g.moved = false
+    g.startX = event.clientX
+    g.startY = event.clientY
+    g.originX = viewport.x
+    g.originY = viewport.y
   }
 
   const onPointerMove = (event: React.PointerEvent) => {
@@ -494,6 +577,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       const dy = event.clientY - g.startY
       if (!g.moved && Math.hypot(dx, dy) > 4) g.moved = true
       if (g.moved) {
+        markBusy()
         setViewport((vp) => ({ ...vp, x: g.originX + dx, y: g.originY + dy }))
       }
       return
@@ -510,23 +594,6 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       return
     }
 
-    if (g.mode === 'paint' && g.journal) {
-      const dirty = stampStroke(
-        activeLayer,
-        base,
-        g.lastX,
-        g.lastY,
-        point.x,
-        point.y,
-        brushSize,
-        paintValue,
-        paintOnLand,
-        g.journal,
-      )
-      g.lastX = point.x
-      g.lastY = point.y
-      if (dirty) repaint(dirty)
-    }
   }
 
   const onPointerUp = (event: React.PointerEvent) => {
@@ -548,22 +615,15 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
           activeLayer,
           base,
           path,
-          activeSlot,
+          paintValue,
           paintOnLand,
           journal,
         )
         if (dirty) {
           repaint(dirty)
-          onStrokeEnd(journal, paintLayer)
+          finishStroke(journal, dirty)
         }
       }
-      return
-    }
-
-    if (g.mode === 'paint') {
-      if (g.journal && g.journal.size > 0) onStrokeEnd(g.journal, paintLayer)
-      g.journal = null
-      g.mode = 'idle'
       return
     }
 
@@ -573,20 +633,20 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         onPlacePoi(Math.round(x), Math.round(y))
       } else if (tool === 'move') {
         // Mover e so navegacao: um clique nao abre nem altera nada.
-      } else if (tool === 'bucket' && activeSlot !== 0) {
+      } else if (tool === 'bucket' && temTinta) {
         const journal = new Journal()
         const dirty = bucketFill(
           activeLayer,
           base,
           x,
           y,
-          activeSlot,
+          paintValue,
           paintOnLand,
           journal,
         )
         if (dirty) {
           repaint(dirty)
-          onStrokeEnd(journal, paintLayer)
+          finishStroke(journal, dirty)
         }
       } else {
         const slot = slotAt(x, y, territory)
@@ -623,11 +683,9 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       ? 'crosshair'
       : tool === 'bucket'
         ? 'cell'
-        : tool === 'brush' || tool === 'eraser'
-          ? 'none'
-          : tool === 'select'
-            ? 'default'
-            : 'grab'
+        : tool === 'select'
+          ? 'default'
+          : 'grab'
 
   return (
     <div

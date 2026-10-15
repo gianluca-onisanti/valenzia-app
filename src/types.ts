@@ -68,9 +68,9 @@ export interface World {
 }
 
 /** Qual camada o pincel esta pintando. */
-export type PaintLayer = 'territory' | 'biome'
+export type PaintLayer = 'territory' | 'biome' | 'land'
 
-export type Tool = 'move' | 'select' | 'bucket' | 'lasso' | 'brush' | 'eraser'
+export type Tool = 'move' | 'select' | 'bucket' | 'lasso'
 
 export interface Viewport {
   x: number

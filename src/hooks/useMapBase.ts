@@ -62,7 +62,8 @@ export function useMapBase(): BaseState {
         if (!ctx) throw new Error('Canvas 2D indisponivel neste navegador.')
         ctx.drawImage(maskImg, 0, 0)
         const { data } = ctx.getImageData(0, 0, geo.width, geo.height)
-        const land = new Uint8Array(geo.width * geo.height)
+        // Uint16 para a costa poder ser pintada com as mesmas ferramentas.
+        const land = new Uint16Array(geo.width * geo.height)
         for (let i = 0; i < land.length; i++) {
           land[i] = data[i * 4] > 127 ? 1 : 0
         }
