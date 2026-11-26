@@ -16,6 +16,8 @@ interface ToolbarProps {
   onView: (view: ViewOptions) => void
   showLabels: boolean
   onToggleLabels: () => void
+  showGuides: boolean
+  onToggleGuides: () => void
   showPois: boolean
   onTogglePois: () => void
   erasing: boolean
@@ -241,6 +243,13 @@ export function Toolbar(props: ToolbarProps) {
             <label className="menu-toggle">
               <input type="checkbox" checked={props.showPois} onChange={props.onTogglePois} />
               Pontos
+            </label>
+            <label
+              className="menu-toggle"
+              title="Linhas de latitude e faixas polares: onde o globo espreme o desenho"
+            >
+              <input type="checkbox" checked={props.showGuides} onChange={props.onToggleGuides} />
+              Guias de latitude
             </label>
           </div>
         )}

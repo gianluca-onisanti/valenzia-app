@@ -198,6 +198,15 @@ material que mais a cerca. A contagem aparece antes de limpar, e dá para
 desfazer. Mapas extraídos de imagem costumam trazer dezenas delas, que na
 esfera, com a costa ligada, viram pontinhos escuros.
 
+### Guias de latitude
+
+No menu ⋮, **Guias de latitude** marca o equador e as latitudes 30°, 60° e
+75°, e escurece as faixas polares. O mapa é equirretangular: cada linha vira
+um círculo de latitude, e perto dos polos o desenho é espremido na
+horizontal por 1/cos(lat) quando vai para a esfera (2× a 60°, 3,9× a 75°).
+Cada linha mostra esse fator. É ali que terra desenhada "plana" vira cunha
+no globo.
+
 ### Visões
 
 `1` Política, `2` Biomas, `3` Mista (o bioma em hachura sobre a cor do país).

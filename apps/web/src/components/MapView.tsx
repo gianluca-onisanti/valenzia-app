@@ -108,6 +108,8 @@ interface MapViewProps {
   visiblePoiTypes: Set<PoiType>
   showPois: boolean
   showLabels: boolean
+  /** Linhas de latitude e faixas polares: onde o globo espreme o desenho. */
+  showGuides: boolean
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -145,6 +147,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     visiblePoiTypes,
     showPois,
     showLabels,
+    showGuides,
   } = props
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -449,6 +452,8 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     }
 
     ctx.restore()
+
+    if (showGuides) drawLatitudeGuides(ctx, base.width * scale, base.height * scale, x, y, size.w)
 
     if (showLabels) {
       ctx.textAlign = 'center'
@@ -898,3 +903,76 @@ function PoiMarker({ poi, viewport, selected, onSelect, onDragStart }: PoiMarker
     </div>
   )
 }
+
+/** Latitudes marcadas pelas guias, em graus (as negativas espelham). */
+const GUIDE_LATS = [30, 60, 75]
+/** Onde comeca o sombreado polar. */
+const POLAR_FROM = 60
+
+/**
+ * Guias de distorcao, em espaco de tela. O mapa e equirretangular: cada linha
+ * vira um circulo de latitude, e perto dos polos o desenho e espremido na
+ * horizontal por 1/cos(lat) quando vai para a esfera. As faixas escurecem
+ * onde isso pesa, e cada linha diz o quanto.
+ */
+function drawLatitudeGuides(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  screenW: number,
+): void {
+  const yOf = (lat: number) => oy + ((90 - lat) / 180) * h
+  const left = Math.max(ox, 0)
+  const right = Math.min(ox + w, screenW)
+  if (right <= left) return
+  ctx.save()
+
+  // Faixas polares: transparente em 60 graus, escura no polo.
+  for (const sign of [1, -1]) {
+    const from = yOf(sign * POLAR_FROM)
+    const pole = yOf(sign * 90)
+    const gradient = ctx.createLinearGradient(0, from, 0, pole)
+    gradient.addColorStop(0, 'rgba(8, 14, 28, 0)')
+    gradient.addColorStop(1, 'rgba(8, 14, 28, 0.5)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(left, Math.min(from, pole), right - left, Math.abs(pole - from))
+  }
+
+  ctx.lineWidth = 1
+  ctx.font = '600 11px Inter, Segoe UI, sans-serif'
+  ctx.textBaseline = 'bottom'
+  ctx.textAlign = 'left'
+  const line = (lat: number, label: string, dashed: boolean) => {
+    const y = Math.round(yOf(lat)) + 0.5
+    ctx.setLineDash(dashed ? [6, 5] : [])
+    ctx.strokeStyle = 'rgba(255, 244, 214, 0.55)'
+    ctx.beginPath()
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
+    ctx.stroke()
+    const tx = left + 8
+    const ty = lat >= 0 ? y - 3 : y + 14
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(8, 14, 28, 0.75)'
+    ctx.strokeText(label, tx, ty)
+    ctx.fillStyle = '#fff4d6'
+    ctx.fillText(label, tx, ty)
+    ctx.lineWidth = 1
+  }
+  line(0, 'Equador', false)
+  for (const lat of GUIDE_LATS) {
+    const stretch = 1 / Math.cos((lat * Math.PI) / 180)
+    const factor = stretch.toFixed(1).replace('.', ',').replace(',0', '')
+    for (const sign of [1, -1]) {
+      line(
+        sign * lat,
+        lat + '°' + (sign > 0 ? 'N' : 'S') + ' · no globo, ' + factor + '× mais estreito',
+        true,
+      )
+    }
+  }
+  ctx.restore()
+}
+

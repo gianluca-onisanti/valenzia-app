@@ -158,6 +158,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
   })
   const [view, setView] = useState<ViewOptions>({ mode: 'politica', showBorders: true })
   const [showLabels, setShowLabels] = useState(true)
+  const [showGuides, setShowGuides] = useState(false)
   const [showPois, setShowPois] = useState(true)
   const [placingPoi, setPlacingPoi] = useState<PoiType | null>(null)
   const [visiblePoiTypes, setVisiblePoiTypes] = useState<Set<PoiType>>(
@@ -998,6 +999,8 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
         onView={setView}
         showLabels={showLabels}
         onToggleLabels={() => setShowLabels((v) => !v)}
+        showGuides={showGuides}
+        onToggleGuides={() => setShowGuides((v) => !v)}
         showPois={showPois}
         onTogglePois={() => setShowPois((v) => !v)}
         erasing={erasing}
@@ -1067,6 +1070,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
           visiblePoiTypes={visiblePoiTypes}
           showPois={showPois}
           showLabels={showLabels}
+          showGuides={showGuides}
         />
 
         <ToolDock tool={tool} onTool={setTool} brushSize={brushSize} onBrushSize={setBrushSize} />
