@@ -1,13 +1,9 @@
 node_modules
 dist
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 
-# Gerados por `npm run prepare:map` a partir de public/source/base.png.
-public/mask.png
-public/coast.png
-public/data/geo.json
+# Configuracao local (copie de .env.example)
+.env
 
-# O que voce pinta NAO entra aqui -- e o conteudo do seu mundo:
-#   public/data/world.json
-#   public/data/territory.png
-#   public/data/biome.png
+# Os mapas nao vivem mais no repositorio: imagens, camadas e fichas ficam no
+# Postgres e entram pela interface do app.

@@ -1,0 +1,881 @@
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { PHASE_BIT, TERRITORY_PHASE } from '@valenzia/shared'
+import type {
+  Material,
+  PaintLayer,
+  Poi,
+  PoiType,
+  Rect,
+  Selection,
+  Tool,
+  Viewport,
+  World,
+} from '../types'
+import {
+  Journal,
+  bucketFill,
+  closeSeams,
+  fillPolygon,
+  padRect,
+  paintComposite,
+  paintTerrain,
+  reconcileTerrain,
+  rectOf,
+  stampDisc,
+  stampStroke,
+  unionRect,
+  type MapBase,
+  type Palette,
+  type Stencil,
+  type ViewOptions,
+} from '../lib/layers'
+import { traceCoast, traceLayer } from '../lib/trace'
+import { drawScene, toShape, type Scene, type Shape } from '../lib/vectorPaint'
+import { POI_TYPES } from '../lib/poiTypes'
+
+const MAX_SCALE = 12
+const MIN_ZOOM_FACTOR = 0.8
+
+export interface SlotStats {
+  area: number
+  /** Area real em km2, pelo raio do corpo. */
+  km2: number
+  bbox: Rect
+  anchor: [number, number]
+}
+
+export interface MapViewHandle {
+  fit(): void
+  zoomBy(factor: number): void
+  focusOn(x: number, y: number, scale?: number): void
+  /**
+   * Repinta a textura: um retangulo, ou o mapa inteiro se vier null. Com
+   * `terrain`, o chao (usado pelo desenho vetorial) e repintado junto.
+   */
+  repaint(rect: Rect | null, terrain?: boolean): void
+  /** A textura do mapa em tamanho real, para quem precisar dela pronta. */
+  texture(): HTMLCanvasElement | null
+  /** So o chao, com texturas, em tamanho real. */
+  ground(): HTMLCanvasElement | null
+}
+
+interface MapViewProps {
+  base: MapBase
+  territory: Uint16Array
+  biome: Uint16Array
+  world: World
+  materials: Material[]
+  palette: Palette
+  /** Muda quando alguma cor e editada, forcando repintura total. */
+  paletteVersion: number
+  /** Sobe quando a pintura assenta: hora de refazer os contornos. */
+  layerVersion: number
+  /** So o terreno: tracar a costa inteira e caro demais para cada pincelada. */
+  terrainVersion: number
+  view: ViewOptions
+  tool: Tool
+  paintLayer: PaintLayer
+  /** Slot que a ferramenta aplica. */
+  activeSlot: number
+  /** Apagar e alvo, nao ferramenta: o laco e o balde e que marcam a area. */
+  erasing: boolean
+  /** Em que fases a tinta pega: paises no solido, mares no liquido... */
+  allowed: Stencil
+  /** Raio do pincel, em pixels do mapa. */
+  brushSize: number
+  selection: Selection
+  territoryStats: Map<number, SlotStats>
+  onSelect: (selection: Selection) => void
+  /** Um passo pode mexer em mais de uma camada: ver reconcileLand. */
+  onStrokeEnd: (parts: { journal: Journal; layer: PaintLayer }[]) => void
+  placingPoi: PoiType | null
+  onPlacePoi: (x: number, y: number) => void
+  onMovePoi: (id: string, x: number, y: number) => void
+  visiblePoiTypes: Set<PoiType>
+  showPois: boolean
+  showLabels: boolean
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, v))
+}
+
+export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
+  props,
+  ref,
+) {
+  const {
+    base,
+    territory,
+    biome,
+    world,
+    materials,
+    palette,
+    paletteVersion,
+    layerVersion,
+    terrainVersion,
+    view,
+    tool,
+    paintLayer,
+    activeSlot,
+    erasing,
+    allowed,
+    brushSize,
+    selection,
+    territoryStats,
+    onSelect,
+    onStrokeEnd,
+    placingPoi,
+    onPlacePoi,
+    onMovePoi,
+    visiblePoiTypes,
+    showPois,
+    showLabels,
+  } = props
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const compositeRef = useRef<{
+    canvas: HTMLCanvasElement
+    ctx: CanvasRenderingContext2D
+  } | null>(null)
+  /** So o chao, com texturas: o fundo do desenho vetorial. */
+  const groundRef = useRef<{
+    canvas: HTMLCanvasElement
+    ctx: CanvasRenderingContext2D
+  } | null>(null)
+
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, scale: 1 })
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
+  const [draggingPoi, setDraggingPoi] = useState<string | null>(null)
+  /** Traco do laco em andamento, em coordenadas da imagem. */
+  const lassoRef = useRef<{ x: number; y: number }[] | null>(null)
+  /** Pincelada em andamento: o diario, o ultimo ponto e a area mexida. */
+  const strokeRef = useRef<{
+    journal: Journal
+    last: { x: number; y: number }
+    dirty: Rect | null
+  } | null>(null)
+  /** Enquanto a mao pinta, o contorno esta atrasado e a textura raster vale. */
+  const staleRef = useRef(true)
+  /**
+   * Enquanto o mapa esta sendo arrastado ou ampliado, vale a textura raster:
+   * ela custa um drawImage por quadro, enquanto o vetor refaz milhares de
+   * segmentos. Parou de mexer, o vetor volta e a imagem fica afiada.
+   */
+  const busyRef = useRef(false)
+  const busyTimer = useRef<number | null>(null)
+  const markBusy = useCallback(() => {
+    busyRef.current = true
+    if (busyTimer.current) clearTimeout(busyTimer.current)
+    busyTimer.current = window.setTimeout(() => {
+      busyRef.current = false
+      bumpFrame((n) => n + 1)
+    }, 140)
+  }, [])
+  const [, bumpFrame] = useState(0)
+  const animation = useRef<number | null>(null)
+
+  /* ------------------------------------------------------------- dimensoes */
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setSize({ w: Math.round(width), h: Math.round(height) })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const fitScale = useMemo(() => {
+    if (!size.w || !size.h) return 1
+    return Math.min(size.w / base.width, size.h / base.height)
+  }, [size, base.width, base.height])
+
+  const fit = useCallback(() => {
+    if (!size.w || !size.h) return
+    setViewport({
+      x: (size.w - base.width * fitScale) / 2,
+      y: (size.h - base.height * fitScale) / 2,
+      scale: fitScale,
+    })
+  }, [fitScale, size, base.width, base.height])
+
+  const fitted = useRef(false)
+  useLayoutEffect(() => {
+    if (fitted.current || !size.w || !size.h) return
+    fitted.current = true
+    fit()
+  }, [fit, size])
+
+  /* ------------------------------------------------------------- pintura */
+  const activeLayer =
+    paintLayer === 'territory' ? territory : paintLayer === 'biome' ? biome : base.terrain
+  // No terreno nao existe "apagar": todo pixel e de algum material.
+  const pintandoTerreno = paintLayer === 'terrain'
+  const paintValue = erasing && !pintandoTerreno ? 0 : activeSlot
+  const temTinta = pintandoTerreno || erasing || activeSlot !== 0
+
+  /* ----------------------------------------------------- textura composta */
+  const repaint = useCallback(
+    (rect: Rect | null, terrainToo = false) => {
+      const composite = compositeRef.current
+      if (!composite) return
+      // As fronteiras consultam o vizinho, entao a area repintada cresce 2px.
+      const area = rect
+        ? padRect(rect, 2, base)
+        : rectOf(0, 0, base.width - 1, base.height - 1)
+      paintComposite(composite.ctx, base, territory, biome, palette, view, area)
+      if (terrainToo && groundRef.current) {
+        paintTerrain(groundRef.current.ctx, base, palette, area)
+      }
+      // A pintura mudou: o contorno vetorial ficou velho ate a proxima
+      // tracagem, e ate la quem aparece na tela e a textura raster.
+      staleRef.current = true
+      bumpFrame((n) => n + 1)
+    },
+    [base, territory, biome, palette, view],
+  )
+
+  useLayoutEffect(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = base.width
+    canvas.height = base.height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    compositeRef.current = { canvas, ctx }
+    paintComposite(
+      ctx,
+      base,
+      territory,
+      biome,
+      palette,
+      view,
+      rectOf(0, 0, base.width - 1, base.height - 1),
+    )
+    bumpFrame((n) => n + 1)
+    return () => {
+      compositeRef.current = null
+    }
+    // Repintura total so quando o gabarito, as cores ou as camadas visiveis
+    // mudam -- jamais a cada pincelada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, view, paletteVersion])
+
+  // O chao do vetor so depende do terreno e dos materiais, nao da visao.
+  useLayoutEffect(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = base.width
+    canvas.height = base.height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    paintTerrain(ctx, base, palette, rectOf(0, 0, base.width - 1, base.height - 1))
+    groundRef.current = { canvas, ctx }
+    bumpFrame((n) => n + 1)
+    return () => {
+      groundRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, paletteVersion])
+
+  /* --------------------------------------------------- mascara da selecao */
+  const selectionMask = useMemo(() => {
+    if (!selection || selection.kind === 'poi') return null
+    const layer = selection.kind === 'territory' ? territory : biome
+    const stats =
+      selection.kind === 'territory' ? territoryStats.get(selection.slot) : undefined
+    const bbox = stats?.bbox ?? rectOf(0, 0, base.width - 1, base.height - 1)
+    const w = bbox.x1 - bbox.x0 + 1
+    const h = bbox.y1 - bbox.y0 + 1
+    if (w <= 0 || h <= 0) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    const image = ctx.createImageData(w, h)
+    const out = image.data
+    let found = false
+    for (let y = 0; y < h; y++) {
+      const src = (bbox.y0 + y) * base.width + bbox.x0
+      const dst = y * w
+      for (let x = 0; x < w; x++) {
+        if (layer[src + x] !== selection.slot) continue
+        found = true
+        const o = (dst + x) * 4
+        out[o] = 255
+        out[o + 1] = 232
+        out[o + 2] = 165
+        out[o + 3] = 255
+      }
+    }
+    if (!found) return null
+    ctx.putImageData(image, 0, 0)
+    return { canvas, x: bbox.x0, y: bbox.y0 }
+  }, [selection, territory, biome, territoryStats, base.width, base.height])
+
+  /* ------------------------------------------------------------- contornos */
+  const [solidShape, setSolidShape] = useState<Shape | null>(null)
+  /** O primeiro tracado da costa ja aconteceu (mesmo que nao haja costa). */
+  const [solidReady, setSolidReady] = useState(false)
+  const [shapes, setShapes] = useState<{
+    territory: Map<number, Shape>
+    biome: Map<number, Shape>
+  } | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    // A costa e o contorno de tudo que e solido. So muda quando o terreno ou
+    // as fases mudam; e tracada em outro quadro, para a tela nao esperar.
+    const timer = setTimeout(() => {
+      const mask = new Uint8Array(base.terrain.length)
+      const solid = PHASE_BIT.solid
+      let any = false
+      for (let i = 0; i < mask.length; i++) {
+        if (base.phaseBit[base.terrain[i]] === solid) {
+          mask[i] = 1
+          any = true
+        }
+      }
+      const loops = any ? traceCoast(mask, base.width, base.height) : []
+      if (!alive) return
+      setSolidShape(loops.length ? toShape(loops) : null)
+      setSolidReady(true)
+      bumpFrame((n) => n + 1)
+    }, 0)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [base, terrainVersion, paletteVersion])
+
+  // Refaz os contornos quando a pintura assenta -- nunca durante a pincelada.
+  useEffect(() => {
+    const build = (layer: Uint16Array) => {
+      const out = new Map<number, Shape>()
+      for (const [slot, loops] of traceLayer(layer, base.width, base.height)) {
+        const shape = toShape(loops)
+        if (shape) out.set(slot, shape)
+      }
+      return out
+    }
+    setShapes({ territory: build(territory), biome: build(biome) })
+    staleRef.current = false
+    bumpFrame((n) => n + 1)
+  }, [layerVersion, territory, biome, base.width, base.height])
+
+  const scene: Scene | null = useMemo(() => {
+    if (!shapes) return null
+    const territories = []
+    for (const entity of world.territories) {
+      const shape = shapes.territory.get(entity.slot)
+      if (shape) territories.push({ entity, shape })
+    }
+    const biomes = []
+    for (const entity of world.biomes) {
+      const shape = shapes.biome.get(entity.slot)
+      if (shape) biomes.push({ entity, shape })
+    }
+    return { solid: solidShape, terrain: null, territories, biomes }
+  }, [shapes, solidShape, world.territories, world.biomes])
+
+  /* ---------------------------------------------------------------- desenho */
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    const composite = compositeRef.current
+    if (!canvas || !composite || !size.w || !size.h) return
+    const dpr = window.devicePixelRatio || 1
+    if (canvas.width !== size.w * dpr || canvas.height !== size.h * dpr) {
+      canvas.width = size.w * dpr
+      canvas.height = size.h * dpr
+    }
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const { x, y, scale } = viewport
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.fillStyle = '#09131b'
+    ctx.fillRect(0, 0, size.w, size.h)
+
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.scale(scale, scale)
+    ctx.imageSmoothingEnabled = scale < 1
+    ctx.imageSmoothingQuality = 'high'
+
+    // Com os contornos em dia, o mapa sai em vetor: fronteira afiada em
+    // qualquer zoom. Durante a pincelada vale a textura raster, que acompanha
+    // a mao em tempo real.
+    const ground = groundRef.current
+    const vector = scene && ground && solidReady && !staleRef.current && !busyRef.current
+    if (vector) {
+      drawScene(
+        ctx,
+        { ...scene, terrain: ground.canvas },
+        { base, materials, view, scale, selection },
+      )
+    } else {
+      ctx.drawImage(composite.canvas, 0, 0)
+      if (selectionMask) {
+        ctx.globalAlpha = 0.34
+        ctx.drawImage(selectionMask.canvas, selectionMask.x, selectionMask.y)
+        ctx.globalAlpha = 1
+      }
+    }
+
+    ctx.restore()
+
+    if (showLabels) {
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      for (const entity of world.territories) {
+        const stats = territoryStats.get(entity.slot)
+        if (!stats) continue
+        const [ax, ay] = entity.labelPos ?? stats.anchor
+        const sx = ax * scale + x
+        const sy = ay * scale + y
+        if (sx < -90 || sy < -40 || sx > size.w + 90 || sy > size.h + 40) continue
+        const screenArea = stats.area * scale * scale
+        if (screenArea < 900) continue
+        const fontSize = clamp(Math.sqrt(screenArea) / 7, 9, 26)
+        const sea = entity.kind !== 'country'
+        ctx.font =
+          (sea ? 'italic 600 ' : '600 ') +
+          fontSize.toFixed(1) +
+          'px Inter, Segoe UI, sans-serif'
+        const text = sea ? entity.name : entity.name.toUpperCase()
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+        ctx.lineWidth = Math.max(2, fontSize / 4)
+        ctx.strokeText(text, sx, sy)
+        ctx.fillStyle = sea ? '#2b4a5c' : '#1b252f'
+        ctx.fillText(text, sx, sy)
+      }
+    }
+
+    // Traco do laco em andamento, ja mostrando a volta que vai fechar.
+    const lasso = lassoRef.current
+    if (lasso && lasso.length > 1) {
+      ctx.beginPath()
+      ctx.moveTo(lasso[0].x * scale + x, lasso[0].y * scale + y)
+      for (let i = 1; i < lasso.length; i++) {
+        ctx.lineTo(lasso[i].x * scale + x, lasso[i].y * scale + y)
+      }
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(255,211,122,0.25)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(0,0,0,0.65)'
+      ctx.lineWidth = 3
+      ctx.stroke()
+      ctx.setLineDash([7, 5])
+      ctx.strokeStyle = '#ffe9b0'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+
+    // O tamanho do pincel, no lugar onde ele vai encostar.
+    if (cursor && tool === 'brush' && temTinta && !placingPoi) {
+      ctx.beginPath()
+      ctx.arc(cursor.x * scale + x, cursor.y * scale + y, Math.max(2, brushSize * scale), 0, Math.PI * 2)
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'
+      ctx.lineWidth = 3
+      ctx.stroke()
+      ctx.strokeStyle = erasing && !pintandoTerreno ? '#ff9b8f' : '#ffe9b0'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+  })
+
+  /* ------------------------------------------------------------- interacao */
+  const toImage = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) return { x: 0, y: 0 }
+      return {
+        x: (clientX - rect.left - viewport.x) / viewport.scale,
+        y: (clientY - rect.top - viewport.y) / viewport.scale,
+      }
+    },
+    [viewport],
+  )
+
+  const slotAt = useCallback(
+    (ix: number, iy: number, layer: Uint16Array) => {
+      const px = Math.floor(ix)
+      const py = Math.floor(iy)
+      if (px < 0 || py < 0 || px >= base.width || py >= base.height) return 0
+      return layer[py * base.width + px]
+    },
+    [base],
+  )
+
+  const zoomAt = useCallback(
+    (factor: number, cx: number, cy: number) => {
+      markBusy()
+      setViewport((vp) => {
+        const next = clamp(vp.scale * factor, fitScale * MIN_ZOOM_FACTOR, MAX_SCALE)
+        const ratio = next / vp.scale
+        return { scale: next, x: cx - (cx - vp.x) * ratio, y: cy - (cy - vp.y) * ratio }
+      })
+    },
+    [fitScale, markBusy],
+  )
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      fit,
+      zoomBy: (factor: number) => zoomAt(factor, size.w / 2, size.h / 2),
+      repaint,
+      texture: () => compositeRef.current?.canvas ?? null,
+      ground: () => groundRef.current?.canvas ?? null,
+      focusOn: (tx: number, ty: number, scale?: number) => {
+        if (animation.current) cancelAnimationFrame(animation.current)
+        const targetScale = scale ?? Math.max(viewport.scale, fitScale * 3)
+        const target = {
+          scale: targetScale,
+          x: size.w / 2 - tx * targetScale,
+          y: size.h / 2 - ty * targetScale,
+        }
+        const from = { ...viewport }
+        const start = performance.now()
+        const step = (now: number) => {
+          const t = clamp((now - start) / 420, 0, 1)
+          const e = 1 - Math.pow(1 - t, 3)
+          setViewport({
+            x: from.x + (target.x - from.x) * e,
+            y: from.y + (target.y - from.y) * e,
+            scale: from.scale + (target.scale - from.scale) * e,
+          })
+          if (t < 1) animation.current = requestAnimationFrame(step)
+        }
+        animation.current = requestAnimationFrame(step)
+      },
+    }),
+    [fit, zoomAt, repaint, size, viewport, fitScale],
+  )
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const rect = el.getBoundingClientRect()
+      zoomAt(
+        Math.exp(-event.deltaY * 0.0016),
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      )
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [zoomAt])
+
+  const gesture = useRef({
+    mode: 'idle' as 'idle' | 'pan' | 'lasso' | 'paint',
+    moved: false,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+  })
+
+  /**
+   * Fecha a pincelada. Mexer no terreno pode deixar pais pintado em cima de
+   * agua nova (ou mar em terra nova): a arrumacao entra no mesmo passo, para
+   * um Ctrl+Z desfazer tudo de uma vez.
+   */
+  const finishStroke = (journal: Journal, dirty: Rect | null) => {
+    const parts: { journal: Journal; layer: PaintLayer }[] = [{ journal, layer: paintLayer }]
+    if (pintandoTerreno && dirty) {
+      const area = padRect(dirty, 2, base)
+      // Fecha a emenda com o terreno que ja existia: sem isso, um fio de agua
+      // preso entre a terra velha e a nova vira uma linha no meio do
+      // continente. Entra no mesmo diario, entao o desfazer leva tudo.
+      if (closeSeams(base.terrain, base.width, base.height, area, paintValue, journal) > 0) {
+        repaint(area, true)
+      }
+      const bits = new Map(
+        world.territories.map((t) => [t.slot, PHASE_BIT[TERRITORY_PHASE[t.kind]]]),
+      )
+      const jt = new Journal()
+      const jb = new Journal()
+      reconcileTerrain(base, territory, biome, area, (slot) => bits.get(slot) ?? 0, jt, jb)
+      if (jt.size > 0) parts.push({ journal: jt, layer: 'territory' })
+      if (jb.size > 0) parts.push({ journal: jb, layer: 'biome' })
+      if (jt.size > 0 || jb.size > 0) repaint(area)
+    }
+    onStrokeEnd(parts)
+  }
+
+  const onPointerDown = (event: React.PointerEvent) => {
+    const g = gesture.current
+    ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)
+    const armed = event.button === 0 && !placingPoi
+    const wantsLasso = armed && tool === 'lasso' && temTinta
+
+    if (wantsLasso) {
+      g.mode = 'lasso'
+      lassoRef.current = [toImage(event.clientX, event.clientY)]
+      return
+    }
+
+    if (armed && tool === 'brush' && temTinta) {
+      g.mode = 'paint'
+      const point = toImage(event.clientX, event.clientY)
+      const journal = new Journal()
+      const dirty = stampDisc(activeLayer, base, point.x, point.y, brushSize, paintValue, allowed, journal)
+      if (dirty) repaint(dirty, pintandoTerreno)
+      strokeRef.current = { journal, last: point, dirty }
+      return
+    }
+
+    // Qualquer outro clique (e os botoes do meio e direito) arrasta o mapa.
+    g.mode = 'pan'
+    g.moved = false
+    g.startX = event.clientX
+    g.startY = event.clientY
+    g.originX = viewport.x
+    g.originY = viewport.y
+  }
+
+  const onPointerMove = (event: React.PointerEvent) => {
+    const g = gesture.current
+    const point = toImage(event.clientX, event.clientY)
+    setCursor(point)
+
+    if (draggingPoi) {
+      onMovePoi(draggingPoi, Math.round(point.x), Math.round(point.y))
+      return
+    }
+
+    if (g.mode === 'pan') {
+      const dx = event.clientX - g.startX
+      const dy = event.clientY - g.startY
+      if (!g.moved && Math.hypot(dx, dy) > 4) g.moved = true
+      if (g.moved) {
+        markBusy()
+        setViewport((vp) => ({ ...vp, x: g.originX + dx, y: g.originY + dy }))
+      }
+      return
+    }
+
+    if (g.mode === 'paint' && strokeRef.current) {
+      const stroke = strokeRef.current
+      const dirty = stampStroke(
+        activeLayer,
+        base,
+        stroke.last.x,
+        stroke.last.y,
+        point.x,
+        point.y,
+        brushSize,
+        paintValue,
+        allowed,
+        stroke.journal,
+      )
+      stroke.last = point
+      if (dirty) {
+        stroke.dirty = unionRect(stroke.dirty, dirty)
+        repaint(dirty, pintandoTerreno)
+      }
+      return
+    }
+
+    if (g.mode === 'lasso' && lassoRef.current) {
+      const path = lassoRef.current
+      const last = path[path.length - 1]
+      // Um ponto a cada ~2px de tela: suave o bastante sem encher o caminho
+      // de pontos praticamente repetidos.
+      if (Math.hypot(point.x - last.x, point.y - last.y) >= 2 / viewport.scale) {
+        path.push(point)
+      }
+      return
+    }
+
+  }
+
+  const onPointerUp = (event: React.PointerEvent) => {
+    const g = gesture.current
+
+    if (draggingPoi) {
+      setDraggingPoi(null)
+      g.mode = 'idle'
+      return
+    }
+
+    if (g.mode === 'paint') {
+      const stroke = strokeRef.current
+      strokeRef.current = null
+      g.mode = 'idle'
+      if (stroke && stroke.journal.size > 0) finishStroke(stroke.journal, stroke.dirty)
+      return
+    }
+
+    if (g.mode === 'lasso') {
+      const path = lassoRef.current
+      lassoRef.current = null
+      g.mode = 'idle'
+      if (path && path.length >= 3) {
+        const journal = new Journal()
+        const dirty = fillPolygon(
+          activeLayer,
+          base,
+          path,
+          paintValue,
+          allowed,
+          journal,
+        )
+        if (dirty) {
+          repaint(dirty, pintandoTerreno)
+          finishStroke(journal, dirty)
+        }
+      }
+      return
+    }
+
+    if (g.mode === 'pan' && !g.moved && event.button === 0) {
+      const { x, y } = toImage(event.clientX, event.clientY)
+      if (placingPoi) {
+        onPlacePoi(Math.round(x), Math.round(y))
+      } else if (tool === 'move') {
+        // Mover e so navegacao: um clique nao abre nem altera nada.
+      } else if (tool === 'bucket' && temTinta) {
+        const journal = new Journal()
+        const dirty = bucketFill(
+          activeLayer,
+          base,
+          x,
+          y,
+          paintValue,
+          allowed,
+          journal,
+        )
+        if (dirty) {
+          repaint(dirty, pintandoTerreno)
+          finishStroke(journal, dirty)
+        }
+      } else {
+        const slot = slotAt(x, y, territory)
+        const bio = slotAt(x, y, biome)
+        if (paintLayer === 'biome' && bio) onSelect({ kind: 'biome', slot: bio })
+        else if (slot) onSelect({ kind: 'territory', slot })
+        else if (bio) onSelect({ kind: 'biome', slot: bio })
+        else onSelect(null)
+      }
+    }
+    g.mode = 'idle'
+  }
+
+  /* --------------------------------------------------------------- overlay */
+  const hovered = useMemo(() => {
+    if (!cursor) return null
+    const px = Math.floor(cursor.x)
+    const py = Math.floor(cursor.y)
+    if (px < 0 || py < 0 || px >= base.width || py >= base.height) return null
+    const t = world.territories.find((e) => e.slot === slotAt(cursor.x, cursor.y, territory))
+    const b = world.biomes.find((e) => e.slot === slotAt(cursor.x, cursor.y, biome))
+    const code = base.terrain[py * base.width + px]
+    const m = materials.find((x) => x.code === code)
+    const parts = [t?.name, b?.name, m?.name].filter(Boolean)
+    return parts.length > 0 ? parts.join(' · ') : null
+  }, [cursor, slotAt, territory, biome, world, base, materials])
+
+  const visiblePois = useMemo(
+    () => (showPois ? world.pois.filter((p) => visiblePoiTypes.has(p.type)) : []),
+    [world.pois, visiblePoiTypes, showPois],
+  )
+
+  const cursorStyle =
+    placingPoi || tool === 'lasso'
+      ? 'crosshair'
+      : tool === 'brush' && temTinta
+        ? 'none'
+      : tool === 'bucket'
+        ? 'cell'
+        : tool === 'select'
+          ? 'default'
+          : 'grab'
+
+  return (
+    <div
+      ref={containerRef}
+      className="map"
+      style={{ cursor: cursorStyle }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerLeave={() => setCursor(null)}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
+
+      <div className="map-overlay">
+        {visiblePois.map((poi) => (
+          <PoiMarker
+            key={poi.id}
+            poi={poi}
+            viewport={viewport}
+            selected={selection?.kind === 'poi' && selection.id === poi.id}
+            onSelect={() => onSelect({ kind: 'poi', id: poi.id })}
+            onDragStart={() => setDraggingPoi(poi.id)}
+          />
+        ))}
+      </div>
+
+      {placingPoi ? (
+        <div className="map-status map-status--action">
+          Clique para posicionar: {POI_TYPES[placingPoi].label} (Esc cancela)
+        </div>
+      ) : (
+        hovered && <div className="map-status">{hovered}</div>
+      )}
+      <div className="map-scale">{Math.round(viewport.scale * 100)}%</div>
+    </div>
+  )
+})
+
+interface PoiMarkerProps {
+  poi: Poi
+  viewport: Viewport
+  selected: boolean
+  onSelect: () => void
+  onDragStart: () => void
+}
+
+function PoiMarker({ poi, viewport, selected, onSelect, onDragStart }: PoiMarkerProps) {
+  const info = POI_TYPES[poi.type]
+  return (
+    <div
+      className={'poi' + (selected ? ' is-selected' : '')}
+      style={{
+        left: poi.x * viewport.scale + viewport.x,
+        top: poi.y * viewport.scale + viewport.y,
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        onSelect()
+        onDragStart()
+      }}
+    >
+      <span className="poi-pin" style={{ background: info.color }}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          {info.glyph}
+        </svg>
+      </span>
+      {viewport.scale > 0.45 && <span className="poi-name">{poi.name}</span>}
+    </div>
+  )
+}

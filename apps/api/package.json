@@ -1,0 +1,29 @@
+{
+  "name": "@valenzia/api",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=../../.env src/scripts/migrate.ts",
+    "import:legacy": "tsx --env-file-if-exists=../../.env src/scripts/import-legacy.ts"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^9.0.0",
+    "@valenzia/shared": "*",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.0.0",
+    "postgres": "^3.4.0",
+    "sharp": "^0.35.5",
+    "tsx": "^4.19.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,50 @@
+# Stack completa: docker compose up --build  ->  http://localhost:8080
+#
+# Para desenvolver com recarga automatica, suba so o banco
+# (docker compose up -d db) e rode `npm run dev` na raiz.
+name: valenzia
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-valenzia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-valenzia}
+      POSTGRES_DB: ${POSTGRES_DB:-valenzia}
+    ports:
+      - "${DB_PORT:-5442}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-valenzia}:${POSTGRES_PASSWORD:-valenzia}@db:5432/${POSTGRES_DB:-valenzia}
+      MIGRATE_ON_START: "true"
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-30}
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

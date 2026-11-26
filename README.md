@@ -1,192 +1,266 @@
-# Valenzia — editor de mundo
+# Valenzia
 
-Editor de mapa de RPG. O mapa começa vazio — só terra e mar — e você constrói
-em cima dele: divide continentes em países, divide o oceano em mares, pinta
-biomas e marca cidades e pontos de interesse.
+Caderno de mundo de RPG. Hoje o app tem um setor pronto, o **Atlas**: um
+editor de mapas onde cada mapa é um **corpo celeste** (planeta ou lua). Os
+outros setores (campanhas, personagens, bestiário) já têm lugar no menu
+lateral e entram depois.
 
-React + TypeScript + Vite. O mapa é desenhado em `<canvas>`; os marcadores
-ficam numa camada HTML por cima.
+No Atlas você cria um planeta a partir de uma imagem ou desenha do zero,
+divide a superfície em países, mares e zonas, pinta biomas e marca cidades e
+pontos de interesse.
 
-## Como começar
+## Stack
+
+| Parte | Tecnologia |
+| --- | --- |
+| `apps/web` | React 19 + TypeScript + Vite, react-router. Mapa em `<canvas>` |
+| `apps/api` | Node 24 + Fastify 5 + Drizzle ORM + sharp |
+| `packages/shared` | tipos, schemas zod, modelos de planeta, cálculo de área |
+| Banco | PostgreSQL 17 |
+| Deploy | Docker Compose: `db`, `api` e `web` (nginx servindo o build e fazendo proxy de `/api`) |
+
+## Como rodar
+
+### Tudo no Docker
+
+```bash
+docker compose up -d --build
+```
+
+Abra **http://localhost:8080**. A API aplica as migrações sozinha ao subir.
+
+### Desenvolvimento (com recarga automática)
 
 ```bash
 npm install
-
-# 1. Salve o mapa em branco (só o verde da terra e o azul do mar) em:
-#    public/source/base.png
-
-# 2. Diga ao editor onde é terra e onde é mar:
-npm run prepare:map
-
-# 3. Suba o editor:
-npm run dev
+docker compose up -d db      # só o Postgres, na porta 5442
+npm run db:migrate
+npm run dev                  # API em :3100 e Vite em :5173
 ```
 
-## A ideia
+Abra **http://localhost:5173**. O Vite faz proxy de `/api` para a API.
 
-A imagem é só o pano de fundo e **nunca é alterada**. Tudo que você cria vive
-em camadas próprias, e por isso renomear um país, remapear uma fronteira ou
-trocar um bioma é mudar um dado — não repintar um pixel.
+As portas fogem das padrão de propósito (5442 em vez de 5432, 3100 em vez de
+3000), para não brigar com um Postgres instalado na máquina nem com outros
+projetos. Para mudar, copie `.env.example` para `.env`.
 
-São duas camadas, cada uma guardando um número por pixel:
+### Comandos
 
-| Camada | O que guarda |
+| Comando | O que faz |
 | --- | --- |
-| **Território** | o país (na terra) ou o mar (na água) de cada pixel |
-| **Bioma** | floresta, deserto, pântano, montanha... |
+| `npm run dev` | API + front com recarga automática |
+| `npm run build` | checa os tipos dos três pacotes e gera o build do front |
+| `npm test` | testes (vitest). Os de API usam o banco `valenzia_test` no Postgres do compose |
+| `npm run db:generate` | gera migração nova depois de mexer em `apps/api/src/db/schema.ts` |
+| `npm run db:migrate` | aplica as migrações pendentes |
+| `npm run import:legacy` | importa um mundo do formato antigo (arquivos em `public/`). Veja o topo de `apps/api/src/scripts/import-legacy.ts` |
 
-Território é uma camada só para países e mares porque um pixel nunca é os
-dois. Bioma é separada porque uma floresta vive *dentro* de um país.
+Para os testes de API, crie o banco uma vez:
+`docker compose exec db psql -U valenzia -c "CREATE DATABASE valenzia_test"`.
 
-### A máscara de terra é um gabarito
+## Modelo de dados
 
-O `prepare:map` responde uma única pergunta para cada pixel: terra ou mar? Esse
-resultado vira o gabarito do pincel. Ao pintar um país, a tinta só pega no
-verde — você pode passar o pincel por cima do oceano à vontade que ele **para
-sozinho na costa**. Para mares, o contrário.
+Cada mapa é uma linha em `bodies`. **Planeta ou lua não é uma coluna**:
+quem tem `parent_id` é lua. Vincular um planeta a outro já faz dele uma lua.
+A API garante que o vínculo tenha um nível só: lua não tem lua, e um planeta
+que já tem luas não pode virar lua.
 
-E fronteira entre dois países nunca tem buraco nem sobreposição, por
-construção: pintar o país B simplesmente reescreve o pixel que era do A.
-
-### Arquivos
-
-| Arquivo | O que é |
+| Tabela | O que guarda |
 | --- | --- |
-| `public/mask.png` | terra (branco) e mar (preto) |
-| `public/coast.png` | a linha de costa, desenhada por cima da pintura |
-| `public/data/geo.json` | dimensões e as duas cores |
-| `public/data/world.json` | **seu conteúdo**: nomes, fichas, pontos |
-| `public/data/territory.png` | **sua pintura**: países e mares |
-| `public/data/biome.png` | **sua pintura**: biomas |
+| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, miniatura, `revision` |
+| `materials` | os materiais de terreno do corpo: nome, fase (`solid`, `liquid` ou `gas`), cor, textura |
+| `layers` | as três camadas raster, em PNG (`terrain`, `territory`, `biome`) |
+| `territories` | países, mares e zonas: nome, cor, ficha (governo, população...) |
+| `biome_areas` | áreas de bioma |
+| `pois` | pontos de interesse: tipo, posição, descrição |
 
-Os três primeiros derivam da imagem e estão no `.gitignore`. Os três últimos
-são o seu mundo — esses valem versionar.
+Todas as entidades têm `uuid` estável, para que as features futuras
+(personagens, campanhas) possam apontar para um planeta, um país ou uma
+cidade. `bodies.owner_id` já existe, nulo, para quando houver login.
 
-As camadas viram PNG porque são 7,7 milhões de posições cada: não caberiam em
-JSON. O número do slot é gravado em `R + G*256`. Como são poucos valores em
-áreas chapadas, o PNG comprime muito bem.
+### As três camadas
+
+Cada camada guarda um número por pixel:
+
+| Camada | O número é |
+| --- | --- |
+| **Terreno** | o código de um material (mar, rocha, gás...) |
+| **Território** | o `slot` do país, mar ou zona dono do pixel |
+| **Bioma** | o `slot` da área de bioma |
+
+Território e bioma são separados porque uma floresta vive *dentro* de um
+país. Renomear um país, trocar uma cor ou uma textura é mudar uma linha no
+banco, sem repintar nenhum pixel.
+
+As camadas são grandes demais para JSON (até 4096 × 2048 posições), então
+viajam e são gravadas como PNG, com o número em `R + G*256`. Como são poucos
+valores em áreas chapadas, o PNG comprime muito bem (centenas de KB). Ao ler
+de volta, o editor desliga a conversão de cor do navegador, porque um bit
+trocado inventaria um país. Mesmo assim, ao abrir, uma faxina (`cleanLayer`)
+remove pixels soltos e avisa se houver tinta sem ficha correspondente.
+
+### Fases e estêncil
+
+Cada material tem uma fase, e cada tipo de território só pega na sua:
+
+| Tinta | Pega em |
+| --- | --- |
+| País | sólido |
+| Mar | líquido |
+| Zona | gás (para gigantes gasosos) |
+| Bioma | sólido |
+| Material de terreno | qualquer lugar |
+
+É por isso que dá para passar o laço por cima do oceano à vontade: a tinta
+do país **para sozinha na costa**. E fronteira entre dois países nunca tem
+buraco nem sobreposição: pintar o país B reescreve o pixel que era do A.
+
+Mexer no terreno (abrir um canal, aterrar o mar, mudar a fase de um
+material) tira a tinta que ficou do lado errado, no mesmo passo do desfazer.
 
 ## Usando
 
-**Ferramentas** — no botão flutuante no canto inferior esquerdo. Ele mostra
-sempre a ferramenta em uso; clique para trocar. Atalhos entre parênteses:
+### Criar um corpo celeste
 
-- **Mover** (`M`) — padrão. Só arrasta o mapa; nada no mundo é alterado.
-- **Selecionar** (`V`) — clique abre a ficha do que estiver embaixo.
-- **Balde** (`G`) — preenche a massa de terra inteira num clique. É assim que
-  uma ilha vira um país de uma vez.
-- **Laço** (`L`) — segure e desenhe uma volta; ao soltar, o miolo vira
-  território. Jeito mais rápido de recortar um pedaço de continente.
-- **Pincel** (`B`) — pinta por cima para subdividir. `[` e `]` mudam o tamanho.
-- **Borracha** (`E`) — devolve a área para "sem dono".
+**Atlas → Novo corpo celeste**, por um destes dois caminhos:
 
-O botão do meio e o direito do mouse arrastam o mapa mesmo com o pincel ativo.
-`Ctrl+Z` desfaz — inclusive pinceladas e exclusões. Com o pincel ou a borracha
-ativos, o controle de tamanho aparece acima do botão flutuante (ou `[` e `]`).
+- **A partir de uma imagem.** Envie um mapa com terra de uma cor e mar de
+  outra (a costa pode estar riscada em preto). A API mostra uma prévia da
+  separação terra/mar e as cores detectadas, que dá para trocar. Ao
+  confirmar, a imagem vira a camada de terreno e é descartada: nada vai para
+  o repositório. O canto superior esquerdo da imagem precisa ser mar, porque
+  é a referência.
+- **Em branco.** Escolha um modelo (oceânico, rochoso, gigante gasoso ou lua
+  cinzenta) e a resolução, e desenhe os continentes com o pincel e o laço na
+  aba **Terreno**.
 
-A barra de cima fica só com o nome do mundo, o que o pincel vai aplicar, as
-três visões e um menu de três pontos — desfazer, salvar, exportar, importar,
-enquadrar e os interruptores de fronteiras, nomes e pontos. O pontinho dourado
-ao lado do nome avisa que há alterações não salvas.
+O botão **+ Lua** ao lado de um planeta cria uma lua já vinculada a ele.
 
-O painel da direita tem dois níveis: a lista, ou a ficha do item escolhido —
-nunca os dois ao mesmo tempo. A seta no topo da ficha volta para a lista.
+### Tamanho
 
-**O fluxo normal:** crie um país no painel da direita (ele já entra no modo
-balde), clique na massa de terra para preencher, depois crie o país vizinho e
-tome a parte dele com o laço ou o pincel. Repita.
+O raio em km é a medida física do corpo. É com ele que o editor calcula a
+**área real** de cada país, mar e bioma em km². O mapa é equirretangular, e a
+área de cada linha de pixels encolhe rumo aos polos. A resolução do mapa é
+outra coisa: só o nível de detalhe do desenho.
 
-O laço não precisa de pontaria: contorne por fora, passando pelo oceano se for
-mais confortável, que só a terra dentro da volta é pintada.
+O nome, a descrição, o raio e a órbita se editam no botão de engrenagem ao
+lado do nome, no editor. Essas mudanças são gravadas na hora.
+
+### Ferramentas
+
+No botão flutuante do canto inferior esquerdo (atalhos entre parênteses):
+
+- **Mover** (`M`): o padrão. Só arrasta o mapa.
+- **Selecionar** (`V`): o clique abre a ficha do que estiver embaixo.
+- **Balde** (`G`): preenche a região contígua inteira num clique. É assim
+  que uma ilha vira um país de uma vez.
+- **Laço** (`L`): desenhe uma volta e solte. O miolo é pintado.
+- **Pincel** (`B`): pinta à mão livre. `[` e `]` mudam o tamanho, e o
+  controle também aparece acima do botão.
+
+**Apagar** (`E`, na barra de cima) faz o laço, o pincel e o balde devolverem
+a área para "sem dono". No terreno não há apagar, porque todo pixel é de
+algum material.
+
+`Ctrl+Z` desfaz (pinturas, exclusões, edições de terreno) e `Ctrl+S` salva.
+Os botões do meio e direito do mouse arrastam o mapa com qualquer ferramenta.
 
 ### Como o laço decide o que é "dentro"
 
-Não por paridade de cruzamentos — essa regra abre buracos quando o traço se
-cruza, e traço à mão livre se cruza o tempo todo. Em vez disso o caminho é
-rasterizado como uma cerca e a inundação começa **de fora** da moldura: o que a
-água de fora não alcança é o miolo. Aguenta rabisco com nó, laço em oito e
-volta por cima do próprio traço.
+Não por paridade de cruzamentos: essa regra abre buracos quando o traço se
+cruza, e traço à mão livre se cruza o tempo todo. O caminho é rasterizado
+como uma cerca e a inundação começa **de fora** da moldura: o que a água de
+fora não alcança é o miolo. A cerca é desenhada em 8-vizinhos e a inundação
+anda em 4-vizinhos, o que garante que uma diagonal da cerca vede de verdade.
+O traço pode sair do mapa (para contornar uma ilha na borda, por exemplo) sem
+problema.
 
-A cerca é desenhada em 8-vizinhos e a inundação anda em 4-vizinhos. Essa
-combinação é o que garante que uma diagonal da cerca vede de verdade, sem
-vazar pelo canto.
+### Painel da direita
 
-**Biomas** funcionam igual: escolha um tipo, ele vira uma área nomeada, e você
-pinta.
+As abas aparecem conforme o corpo:
 
-## As três visões
+- **Países**, **Mares** e **Zonas** só aparecem se houver material daquela
+  fase.
+- **Biomas** só aparece se houver material sólido.
+- **Pontos** e **Terreno** sempre aparecem.
 
-Na barra superior, ou com as teclas `1` `2` `3`:
+O painel tem dois níveis, a lista ou a ficha do item escolhido, e a seta no
+topo da ficha volta para a lista.
 
-| Visão | O que mostra |
-| --- | --- |
-| **Política** | só as cores dos países e mares |
-| **Biomas** | só as cores dos biomas, com as fronteiras por cima |
-| **Mista** | o bioma em hachura sobre a cor do país |
+Na aba **Terreno**, escolher um material arma a ferramenta com ele e abre o
+editor de nome, cor, fase e **textura**: liso, ruído, faixas (para gás) ou
+crateras, com segunda cor, intensidade e escala. Excluir um material pede
+outro para ficar com os pixels dele.
 
-A hachura existe porque na visão mista precisa dar para ver os dois: as faixas
-deixam a cor do país aparecer entre elas. Na visão de biomas não há país
-embaixo, então a cor entra chapada — e terra sem bioma nenhum volta ao verde do
-mundo, em vez de ficar com a cor do país.
+### Visões
 
-As fronteiras continuam desenhadas nas três, e têm um interruptor próprio.
+`1` Política, `2` Biomas, `3` Mista (o bioma em hachura sobre a cor do país).
+O botão de globo mostra o corpo como esfera. Na ficha de um território, o
+botão de olho abre o **recorte isolado**, com exportação em PNG e SVG.
 
-## Pontos
+### Pontos
 
-Na aba Pontos (ou direto na ficha de um país), escolha um tipo e vá clicando no
-mapa; `Esc` sai do modo. Arraste um marcador para reposicionar.
+O país de um ponto **não é um campo**: ele é lido da pintura na coordenada
+do ponto. Repintar uma fronteira já troca o dono da cidade. A capital é o
+ponto do tipo Capital que estiver dentro do país, e um país pode ter várias.
 
-**O país de um ponto não é um campo que você preenche** — é lido da pintura, na
-coordenada onde o ponto está. Então a ficha do país lista sozinha tudo que caiu
-dentro das fronteiras dele, e repintar uma fronteira já troca o dono da cidade,
-sem nada para sincronizar. Um ponto no mar aberto ou em terra sem dono
-simplesmente não tem país.
+## Salvar
 
-Por isso não existe campo "capital": a capital é o ponto do tipo Capital que
-estiver dentro do país — e um país pode ter várias sem nenhum arranjo especial.
+Enquanto você trabalha, tudo vive em memória no navegador. Há dois lugares de
+gravação:
 
-O interruptor **Pontos** na barra superior esconde todos os marcadores de uma
-vez, quando o mapa ficar poluído. Para esconder só alguns tipos, use os filtros
-da aba Pontos.
+| Onde | Quando | O que vai |
+| --- | --- | --- |
+| **Rascunho** (IndexedDB do navegador, um por mapa) | sozinho, 4 s depois de cada alteração | fichas e as três camadas |
+| **Banco** (Postgres, via API) | **Salvar** (menu ou `Ctrl+S`) | tudo numa transação só, mais a miniatura do atlas |
 
-## Salvando
+Cada Salvar envia a `revision` que o editor leu. Se alguém salvou o mesmo
+mapa em outro lugar nesse meio-tempo, a API recusa com 409, e o editor
+oferece **sobrescrever** ou **descartar e recarregar**. O rascunho guarda a
+revisão de origem: se estiver atrasado em relação ao banco, o editor
+pergunta antes de restaurá-lo, em vez de atropelar a versão salva.
 
-O botão **Salvar** grava o mundo e as duas camadas em `public/data/` (só em
-`npm run dev`, via um middleware do Vite), para o trabalho entrar no git. Fora
-do dev, ele baixa os arquivos.
-
-Enquanto você trabalha, um rascunho é guardado sozinho no navegador
-(IndexedDB — as camadas são grandes demais para `localStorage`). Se o navegador
-fechar sem salvar, o editor oferece o rascunho de volta na próxima abertura.
-
-## Ajustes finos
-
-Em `scripts/prepare.mjs`:
-
-- `INK_VALUE` (105) — quão escuro um pixel precisa ser para contar como traço
-  de costa em vez de terra ou mar. O critério é o valor (máximo do RGB) e não a
-  luminância, porque cores saturadas podem ter luminância baixa sem serem
-  pretas.
-
-Se a sua imagem for JPEG, prefira reexportar em PNG: a compressão com perdas
-espalha a cor da terra e do mar e deixa a separação menos limpa.
+**Exportar** baixa `world.json` e as três camadas em PNG. **Importar** lê um
+`world.json` e troca as fichas, mas não as camadas.
 
 ## Estrutura
 
 ```
-scripts/prepare.mjs         separa terra de mar (roda no Node, com sharp)
-src/lib/layers.ts           motor de pintura: balde, pincel, desfazer, textura
-src/lib/store.ts            camadas em PNG, rascunho em IndexedDB, salvar
-src/lib/biomes.ts           tipos de bioma e paletas sugeridas
-src/hooks/useMapBase.ts     carrega a mascara de terra e a costa
-src/components/MapView.tsx  canvas, zoom, pintura e repintura incremental
-src/components/Sidebar.tsx  abas de paises, mares, biomas e pontos
-src/components/Toolbar.tsx  ferramentas, visoes, salvar
+apps/api/src/
+  app.ts                  Fastify: multipart, erros, rotas
+  bodies/routes.ts        as rotas /api/bodies e /api/terrain/preview
+  bodies/repo.ts          leitura, criacao, Salvar transacional, regras de lua
+  db/schema.ts            o schema do Drizzle (migracoes em apps/api/drizzle/)
+  terrain/extract.ts      imagem -> terra e mar (o antigo prepare:map)
+  terrain/codec.ts        camadas <-> PNG (R + G*256)
+  terrain/thumbnail.ts    miniatura de um corpo recem-criado
+  scripts/                migrate e import-legacy
+
+apps/web/src/
+  AppShell.tsx, nav.tsx   menu lateral dos setores (adicione os novos em nav.tsx)
+  pages/                  inicio, atlas, novo corpo, editor de mapa
+  hooks/useBody.ts        carrega um corpo e as camadas da API
+  lib/layers.ts           motor de pintura: estencil por fase, pincel, balde, laco, desfazer
+  lib/texture.ts          texturas procedurais (ruido, faixas, crateras)
+  lib/trace.ts            camadas -> contornos vetoriais
+  lib/vectorPaint.ts      desenho vetorial (canvas e SVG)
+  lib/globe.ts            projecao na esfera
+  lib/store.ts            codec PNG no navegador, rascunho, miniatura
+  lib/api.ts              cliente da API
+  components/             MapView, Sidebar, Toolbar, ToolDock, dialogos...
+
+packages/shared/src/
+  domain.ts               tipos do mundo e constantes de fase
+  schemas.ts              validacao zod (so a API importa: @valenzia/shared/schemas)
+  templates.ts            os modelos de planeta em branco
+  area.ts                 area real por pixel, formatacao de km2
 ```
 
 ### Por que a pintura não trava
 
-Repintar os 7,7M de pixels a cada movimento do mouse seria inviável. Cada
-pincelada devolve o retângulo que realmente mudou, e só esse pedaço da textura
-é recalculado. O mapa inteiro só é repintado quando você troca a cor de um país
-ou troca de visão.
+Repintar milhões de pixels a cada movimento do mouse seria inviável. Cada
+traço devolve o retângulo que realmente mudou, e só esse pedaço da textura é
+recalculado. Quando a mão para, as camadas viram contornos (`trace.ts`) e o
+mapa passa a ser desenhado em vetor, com fronteira e costa afiadas em
+qualquer zoom, sobre o chão já pintado com as texturas. Durante o traço,
+vale a textura raster, que acompanha a mão em tempo real.
