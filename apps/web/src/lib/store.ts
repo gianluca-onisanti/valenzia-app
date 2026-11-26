@@ -71,6 +71,12 @@ export function encodeLayer(
  * canvas pedido como 'willReadFrequently' fica na CPU, longe do arredondamento
  * que a leitura de volta da GPU pode introduzir.
  */
+export class LayerSizeError extends Error {
+  constructor(w: number, h: number, expectedW: number, expectedH: number) {
+    super('Camada com ' + w + 'x' + h + ', mas o mapa tem ' + expectedW + 'x' + expectedH)
+  }
+}
+
 export async function decodeLayer(
   source: Blob | string,
   width: number,
@@ -78,6 +84,11 @@ export async function decodeLayer(
 ): Promise<Uint16Array> {
   const bitmap = await loadBitmap(source)
   try {
+    // Uma camada de outro tamanho (rascunho de antes de uma conversao, por
+    // exemplo) seria colada esticada ou cortada, em silencio. Melhor recusar.
+    if (bitmap.width !== width || bitmap.height !== height) {
+      throw new LayerSizeError(bitmap.width, bitmap.height, width, height)
+    }
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height

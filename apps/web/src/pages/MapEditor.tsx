@@ -50,6 +50,7 @@ import {
   normalizeWorld,
   readDraft,
   saveDraft,
+  LayerSizeError,
   slug,
   thumbnailOf,
 } from '../lib/store'
@@ -263,8 +264,13 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
             setStatus(sweep(restored) ?? 'Rascunho do navegador restaurado')
             setLoading(false)
             return
-          } catch {
-            // Rascunho corrompido: segue com o que veio do servidor.
+          } catch (err) {
+            // Rascunho de outro tamanho (o mapa foi convertido depois dele) ou
+            // corrompido: segue com o que veio do servidor.
+            if (err instanceof LayerSizeError) {
+              await clearDraft(meta.id)
+              setStatus('Rascunho descartado: era de antes de o mapa mudar de tamanho')
+            }
           }
         } else {
           await clearDraft(meta.id)
