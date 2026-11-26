@@ -767,10 +767,10 @@ function composeInto(
       // exemplo). Pular em vez de ler fora do array evita pintar de preto.
       if (slot !== 0 && showTerritory && slot * 3 + 2 < palette.territory.length) {
         const t = slot * 3
-        // Mistura forte, mas deixa passar um pouco do chao (e da textura).
-        r = (r * 22 + palette.territory[t] * 78) / 100
-        g = (g * 22 + palette.territory[t + 1] * 78) / 100
-        b = (b * 22 + palette.territory[t + 2] * 78) / 100
+        // A cor do pais entra cheia: a que foi escolhida e a que aparece.
+        r = palette.territory[t]
+        g = palette.territory[t + 1]
+        b = palette.territory[t + 2]
       }
 
       const bio = biome[i]

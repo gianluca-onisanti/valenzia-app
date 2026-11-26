@@ -311,8 +311,19 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       const src = (bbox.y0 + y) * base.width + bbox.x0
       const dst = y * w
       for (let x = 0; x < w; x++) {
-        if (layer[src + x] !== selection.slot) continue
+        const i = src + x
+        if (layer[i] !== selection.slot) continue
         found = true
+        // So a borda: um veu por cima mudaria a cor do pais.
+        const gx = bbox.x0 + x
+        const gy = bbox.y0 + y
+        const edge =
+          gx === 0 || gx === base.width - 1 || gy === 0 || gy === base.height - 1 ||
+          layer[i - 1] !== selection.slot ||
+          layer[i + 1] !== selection.slot ||
+          layer[i - base.width] !== selection.slot ||
+          layer[i + base.width] !== selection.slot
+        if (!edge) continue
         const o = (dst + x) * 4
         out[o] = 255
         out[o + 1] = 232
@@ -428,9 +439,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     } else {
       ctx.drawImage(composite.canvas, 0, 0)
       if (selectionMask) {
-        ctx.globalAlpha = 0.34
         ctx.drawImage(selectionMask.canvas, selectionMask.x, selectionMask.y)
-        ctx.globalAlpha = 1
       }
     }
 

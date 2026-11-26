@@ -47,10 +47,10 @@ export async function renderThumbnail(
       }
       const over = territory ? paint.get(territory.layer[i]) : undefined
       if (over) {
-        // A mesma mistura do editor: 78% da tinta, 22% do chao.
-        r = (r * 22 + over[0] * 78) / 100
-        gr = (gr * 22 + over[1] * 78) / 100
-        b = (b * 22 + over[2] * 78) / 100
+        // Como no editor: a cor do pais entra cheia.
+        r = over[0]
+        gr = over[1]
+        b = over[2]
       }
       const o = (y * tw + x) * 3
       raw[o] = Math.min(255, Math.max(0, r))

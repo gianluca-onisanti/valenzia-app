@@ -1,4 +1,4 @@
-import { TERRITORY_PHASE, type Material } from '@valenzia/shared'
+import type { Material } from '@valenzia/shared'
 import type { BiomeArea, Selection, Territory } from '../types'
 import { hexToRgb, type MapBase, type ViewOptions } from './layers'
 import { pathData, loopsBounds, type Loop } from './trace'
@@ -32,16 +32,6 @@ export function toShape(loops: Loop[]): Shape | null {
 
 type Rgb = [number, number, number]
 
-/** Mistura duas cores como o raster faz: `pct` por cento da segunda. */
-function mix(a: Rgb, b: Rgb, pct: number): Rgb {
-  const keep = 100 - pct
-  return [
-    (a[0] * keep + b[0] * pct) / 100,
-    (a[1] * keep + b[1] * pct) / 100,
-    (a[2] * keep + b[2] * pct) / 100,
-  ]
-}
-
 const rgb = (c: Rgb, factor = 1) =>
   'rgb(' +
   Math.round(c[0] * factor) +
@@ -51,19 +41,13 @@ const rgb = (c: Rgb, factor = 1) =>
   Math.round(c[2] * factor) +
   ')'
 
-/** Mistura do raster: 78% da tinta do pais, 22% do chao. */
-const TERRITORY_MIX = 78
-
-/** A cor do chao onde um tipo de territorio vive: o primeiro material da fase. */
-export function groundColor(entity: Territory, materials: Material[]): Rgb {
-  const phase = TERRITORY_PHASE[entity.kind]
-  const found = materials.find((m) => m.phase === phase) ?? materials[0]
-  return found ? hexToRgb(found.color) : [128, 128, 128]
-}
-
-/** A cor cheia de um territorio: a tinta dele sobre o chao da fase dele. */
-export function territoryFill(entity: Territory, materials: Material[]): Rgb {
-  return mix(groundColor(entity, materials), hexToRgb(entity.color), TERRITORY_MIX)
+/**
+ * A cor cheia de um territorio: exatamente a que foi escolhida para ele.
+ * (Antes ela entrava 78% sobre o chao, e um pais vermelho sobre terra verde
+ * virava laranja.)
+ */
+export function territoryFill(entity: Territory): Rgb {
+  return hexToRgb(entity.color)
 }
 
 export interface SceneEntry<T> {
@@ -92,6 +76,8 @@ export interface DrawOptions {
 }
 
 const BORDER_WIDTH = 1.25
+/** O contorno da selecao, em pixels de tela. */
+const SELECT_WIDTH = 4
 /** A linha da costa, em pixels de tela: nao engorda com o zoom. */
 const COAST_WIDTH = 1.7
 /**
@@ -122,7 +108,7 @@ export function drawScene(
   scene: Scene,
   options: DrawOptions,
 ): void {
-  const { view, scale, only, materials } = options
+  const { view, scale, only } = options
   const showTerritory = view.mode !== 'biomas'
   const showBiomes = view.mode !== 'politica'
   const hatched = view.mode === 'mista'
@@ -140,8 +126,7 @@ export function drawScene(
     ctx.clip(territories[0].shape.path)
   }
 
-  // O chao. Com textura de verdade, a tinta do pais entra translucida por
-  // cima (o mesmo 78/22 do raster); sem a imagem, a cor ja vem misturada.
+  // O chao (materiais e texturas) e, por cima, a tinta cheia de cada pais.
   const ground = scene.terrain
   if (ground && (only === undefined || clipped)) {
     const smoothing = ctx.imageSmoothingEnabled
@@ -152,14 +137,8 @@ export function drawScene(
 
   if (showTerritory || only !== undefined) {
     for (const { entity, shape } of territories) {
-      if (ground) {
-        ctx.globalAlpha = TERRITORY_MIX / 100
-        ctx.fillStyle = entity.color
-      } else {
-        ctx.fillStyle = rgb(territoryFill(entity, materials))
-      }
+      ctx.fillStyle = entity.color
       ctx.fill(shape.path)
-      ctx.globalAlpha = 1
     }
   }
 
@@ -183,7 +162,7 @@ export function drawScene(
     ctx.lineCap = 'round'
     ctx.lineWidth = BORDER_WIDTH / scale
     for (const { entity, shape } of territories) {
-      ctx.strokeStyle = rgb(territoryFill(entity, materials), 0.45)
+      ctx.strokeStyle = rgb(territoryFill(entity), 0.45)
       ctx.stroke(shape.path)
     }
   }
@@ -193,10 +172,17 @@ export function drawScene(
     const list = selection.kind === 'territory' ? scene.territories : scene.biomes
     const found = list.find((e) => e.entity.slot === selection.slot)
     if (found) {
-      ctx.globalAlpha = 0.34
-      ctx.fillStyle = '#ffe8a5'
-      ctx.fill(found.shape.path)
-      ctx.globalAlpha = 1
+      // Contorno em vez de veu: um veu claro por cima mudaria a cor do pais.
+      ctx.save()
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.strokeStyle = 'rgba(10,12,16,0.9)'
+      ctx.lineWidth = SELECT_WIDTH / scale
+      ctx.stroke(found.shape.path)
+      ctx.strokeStyle = '#ffe8a5'
+      ctx.lineWidth = (SELECT_WIDTH * 0.5) / scale
+      ctx.stroke(found.shape.path)
+      ctx.restore()
     }
   }
 
@@ -247,13 +233,13 @@ function hatch(
 
 /** Documento SVG de um recorte -- vetor de verdade, sem perder no zoom. */
 export function sceneToSvg(scene: Scene, options: DrawOptions & { only: number }): string {
-  const { view, only, materials } = options
+  const { view, only } = options
   const entry = scene.territories.find((t) => t.entity.slot === only)
   if (!entry) return ''
   const [x0, y0, x1, y1] = entry.shape.bounds
   const w = Math.max(1, Math.ceil(x1 - x0))
   const h = Math.max(1, Math.ceil(y1 - y0))
-  const fill = territoryFill(entry.entity, materials)
+  const fill = territoryFill(entry.entity)
   const defs: string[] = ['<clipPath id="corte"><path d="' + entry.shape.d + '"/></clipPath>']
   const body: string[] = ['<path d="' + entry.shape.d + '" fill="' + rgb(fill) + '"/>']
 
