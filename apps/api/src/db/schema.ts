@@ -24,6 +24,7 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 })
 
 export const bodyOrigin = pgEnum('body_origin', ['image', 'blank'])
+export const sourceProjection = pgEnum('source_projection', ['equirect', 'mercator'])
 export const phase = pgEnum('material_phase', ['solid', 'liquid', 'gas'])
 export const layerKind = pgEnum('layer_kind', ['terrain', 'territory', 'biome'])
 export const territoryKind = pgEnum('territory_kind', ['country', 'sea', 'zone'])
@@ -59,6 +60,8 @@ export const bodies = pgTable(
     axialTilt: doublePrecision('axial_tilt').notNull().default(0),
     /** Gira no sentido contrario ao normal. */
     retrograde: boolean('retrograde').notNull().default(false),
+    /** Em que projecao o desenho foi feito (o mapa guardado e equirretangular). */
+    sourceProjection: sourceProjection('source_projection').notNull().default('equirect'),
     thumbnail: bytea('thumbnail'),
     revision: integer('revision').notNull().default(0),
     ...timestamps,

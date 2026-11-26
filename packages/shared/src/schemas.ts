@@ -142,6 +142,33 @@ export const createFromImageSchema = z.object({
   parentId: z.uuid().nullish(),
   landColor: hexColor.optional(),
   waterColor: hexColor.optional(),
+  /** Em que projecao a imagem foi desenhada. */
+  projection: z.enum(['equirect', 'mercator']).default('equirect'),
+  /** Com Mercator: o que preenche as calotas polares. */
+  cap: z.enum(['water', 'ice']).default('ice'),
 })
 
 export type CreateFromImageInput = z.infer<typeof createFromImageSchema>
+
+/** Converte um corpo desenhado em Mercator para o equirretangular do app. */
+export const reprojectSchema = z.object({
+  expectedRevision: z.number().int().min(0),
+  /** 'copy' cria um corpo novo e deixa o original; 'replace' converte este. */
+  mode: z.enum(['copy', 'replace']),
+  /** O que preenche as calotas: um material do corpo ou um novo. */
+  cap: z.union([
+    z.object({ code: z.number().int().min(0).max(65535) }),
+    z.object({
+      material: z.object({
+        name: z.string().trim().min(1).max(60),
+        phase: z.enum(['solid', 'liquid', 'gas']),
+        color: hexColor,
+      }),
+    }),
+  ]),
+  /** Nome da copia (padrao: "<nome> (Mercator)"). */
+  name: bodyName.optional(),
+})
+
+export type ReprojectInput = z.infer<typeof reprojectSchema>
+

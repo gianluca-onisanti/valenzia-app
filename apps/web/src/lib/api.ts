@@ -4,6 +4,7 @@ import type {
   CreateBlankInput,
   LayerKind,
   PatchBodyInput,
+  ReprojectInput,
   SaveDocumentInput,
 } from '@valenzia/shared'
 
@@ -87,6 +88,8 @@ export const api = {
       parentId?: string | null
       landColor?: string
       waterColor?: string
+      projection?: 'equirect' | 'mercator'
+      cap?: 'water' | 'ice'
     },
   ) {
     const form = new FormData()
@@ -99,6 +102,10 @@ export const api = {
 
   patchBody: (id: string, patch: PatchBodyInput) =>
     request<BodyDocument>('/bodies/' + id, json('PATCH', patch)),
+
+  /** Converte um corpo desenhado em Mercator: copia ou no lugar. */
+  reproject: (id: string, input: ReprojectInput) =>
+    request<BodyDocument>('/bodies/' + id + '/reproject', json('POST', input)),
 
   deleteBody: (id: string) => request<void>('/bodies/' + id, { method: 'DELETE' }),
 

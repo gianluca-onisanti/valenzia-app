@@ -1,16 +1,34 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { LAYER_KINDS, TEMPLATES, type LayerKind } from '@valenzia/shared'
+import {
+  LAYER_KINDS,
+  TEMPLATES,
+  equirectHeight,
+  mercatorRowMap,
+  remapRows,
+  type LayerKind,
+  type Material,
+} from '@valenzia/shared'
 import {
   createBlankSchema,
   createFromImageSchema,
   patchBodySchema,
+  reprojectSchema,
   saveDocumentSchema,
 } from '@valenzia/shared/schemas'
 import type { Database } from '../db/client'
 import { badRequest } from '../errors'
 import { encodeLayerPng, filledLayer } from '../terrain/codec'
-import { extractTerrain, terrainFromExtraction } from '../terrain/extract'
+import { WATER_CODE, extractTerrain, terrainFromExtraction } from '../terrain/extract'
+
+/** A calota polar de gelo, quando a imagem vem em Mercator. */
+const ICE_MATERIAL: Material = {
+  code: 2,
+  name: 'Gelo',
+  phase: 'solid',
+  color: '#e9f1f5',
+  texture: { pattern: 'ruido', color2: '#c9d8e0', intensity: 0.35, scale: 48 },
+}
 import {
   createBody,
   deleteBody,
@@ -19,6 +37,7 @@ import {
   getThumbnail,
   listTree,
   patchBody,
+  reprojectBody,
   saveDocument,
 } from './repo'
 
@@ -127,22 +146,44 @@ export async function bodyRoutes(app: FastifyInstance, opts: { db: Database }) {
       parentId: fields.parentId || null,
     })
     const result = await extractTerrain(files.image)
-    const { terrain, materials } = terrainFromExtraction(result, {
+    const extracted = terrainFromExtraction(result, {
       landColor: input.landColor,
       waterColor: input.waterColor,
     })
+    let { terrain, materials } = extracted
+    let height = result.height
+    // Desenhada em Mercator: as linhas vao para o lugar certo e o que passa
+    // da latitude coberta vira calota (mar, ou gelo como material novo).
+    if (input.projection === 'mercator') {
+      height = equirectHeight(result.width)
+      let capCode = WATER_CODE
+      if (input.cap === 'ice') {
+        capCode = ICE_MATERIAL.code
+        materials = [...materials, ICE_MATERIAL]
+      }
+      terrain = remapRows(terrain, result.width, mercatorRowMap(result.width, result.height, height), [capCode])
+    }
     const body = await createBody(db, {
       name: input.name,
       description: input.description,
       radiusKm: input.radiusKm,
       parentId: input.parentId,
       width: result.width,
-      height: result.height,
+      height,
       origin: 'image',
+      sourceProjection: input.projection,
       materials,
-      terrainPng: await encodeLayerPng(terrain, result.width, result.height),
+      terrainPng: await encodeLayerPng(terrain, result.width, height),
     })
     return reply.code(201).send(body)
+  })
+
+  /** Converte um corpo desenhado em Mercator (copia ou no lugar). */
+  app.post('/api/bodies/:id/reproject', async (request, reply) => {
+    const { id } = parse(idParams, request.params)
+    const input = parse(reprojectSchema, request.body)
+    const body = await reprojectBody(db, id, input)
+    return reply.code(input.mode === 'copy' ? 201 : 200).send(body)
   })
 
   app.patch('/api/bodies/:id', async (request) => {

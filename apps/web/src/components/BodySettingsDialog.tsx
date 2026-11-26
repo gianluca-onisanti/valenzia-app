@@ -17,12 +17,15 @@ export function BodySettingsDialog({
   onClose,
   onSaved,
   onDeleted,
+  onReproject,
 }: {
   body: BodyMeta
   phaseTotals: PhaseTotals
   onClose: () => void
   onSaved: (next: BodyMeta) => void
   onDeleted: () => void
+  /** Abre a conversao de Mercator. */
+  onReproject: () => void
 }) {
   const [value, setValue] = useState<BodyFieldValues>({
     name: body.name,
@@ -144,6 +147,24 @@ export function BodySettingsDialog({
             {body.width} x {body.height} px
           </p>
         )}
+
+        <div className="form-field">
+          <span>Projecao</span>
+          <p className="muted small">
+            {body.sourceProjection === 'mercator'
+              ? 'Desenhado em Mercator e ja convertido: as calotas polares sao area nova.'
+              : 'Equirretangular: cada linha do mapa e uma latitude, de polo a polo. ' +
+                'Se o desenho foi feito como um mapa-mundi plano (Mercator), a terra ' +
+                'perto do topo e do fundo vira cunha no globo.'}
+          </p>
+          {body.sourceProjection !== 'mercator' && (
+            <div>
+              <button type="button" className="button" onClick={onReproject}>
+                Converter de Mercator...
+              </button>
+            </div>
+          )}
+        </div>
 
         {moons.length > 0 && (
           <div className="form-field">

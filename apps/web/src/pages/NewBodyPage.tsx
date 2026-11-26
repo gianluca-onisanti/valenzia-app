@@ -3,6 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
   EARTH_RADIUS_KM,
   TEMPLATE_LIST,
+  equirectHeight,
+  mercatorMaxLat,
   type BodyTreeNode,
   type TemplateId,
 } from '@valenzia/shared'
@@ -46,6 +48,8 @@ export function NewBodyPage() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [colors, setColors] = useState<{ land: string; water: string } | null>(null)
+  const [projection, setProjection] = useState<'equirect' | 'mercator'>('equirect')
+  const [cap, setCap] = useState<'water' | 'ice'>('ice')
   const [template, setTemplate] = useState<TemplateId>(params.get('parent') ? 'lua' : 'oceanico')
   const [resolution, setResolution] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
@@ -97,6 +101,8 @@ export function NewBodyPage() {
               ...common,
               landColor: colors?.land,
               waterColor: colors?.water,
+              projection,
+              cap,
             })
           : await api.createBlank({
               ...common,
@@ -187,6 +193,14 @@ export function NewBodyPage() {
                       Terra em branco, mar em preto. Se estiver invertido, o canto
                       superior esquerdo da imagem nao e mar -- ele e a referencia.
                     </p>
+                    <ProjectionChoice
+                      width={preview.width}
+                      height={preview.height}
+                      projection={projection}
+                      onProjection={setProjection}
+                      cap={cap}
+                      onCap={setCap}
+                    />
                     <div className="field-row">
                       <label className="form-field">
                         <span>Cor da terra</span>
@@ -282,3 +296,75 @@ export function NewBodyPage() {
     </div>
   )
 }
+
+const fmtDeg = (rad: number) => ((rad * 180) / Math.PI).toFixed(1).replace('.', ',') + '°'
+
+/**
+ * Em que projecao a imagem foi desenhada. O app guarda tudo em
+ * equirretangular; uma imagem Mercator e convertida na entrada, e o que passa
+ * da latitude que ela cobre vira calota polar.
+ */
+function ProjectionChoice(props: {
+  width: number
+  height: number
+  projection: 'equirect' | 'mercator'
+  onProjection: (p: 'equirect' | 'mercator') => void
+  cap: 'water' | 'ice'
+  onCap: (c: 'water' | 'ice') => void
+}) {
+  const reach = fmtDeg(mercatorMaxLat(props.width, props.height))
+  return (
+    <div className="form-field">
+      <span>Projecao da imagem</span>
+      <div className="segmented">
+        <button
+          type="button"
+          className={props.projection === 'equirect' ? 'active' : ''}
+          onClick={() => props.onProjection('equirect')}
+          title="Cada linha da imagem e uma latitude, de polo a polo"
+        >
+          Equirretangular
+        </button>
+        <button
+          type="button"
+          className={props.projection === 'mercator' ? 'active' : ''}
+          onClick={() => props.onProjection('mercator')}
+          title="Mapa-mundi plano comum: a forma se mantem, os polos ficam de fora"
+        >
+          Mercator
+        </button>
+      </div>
+      {props.projection === 'equirect' ? (
+        <p className="muted small">
+          A imagem cobre de polo a polo. O que encostar no topo ou no fundo fica
+          espremido perto dos polos no globo.
+        </p>
+      ) : (
+        <>
+          <p className="muted small">
+            A imagem cobre de {reach}S a {reach}N e as formas ficam como foram
+            desenhadas. O mapa sai com {props.width} x {equirectHeight(props.width)} px; acima
+            dessa latitude vira calota polar.
+          </p>
+          <div className="segmented">
+            <button
+              type="button"
+              className={props.cap === 'ice' ? 'active' : ''}
+              onClick={() => props.onCap('ice')}
+            >
+              Calota de gelo
+            </button>
+            <button
+              type="button"
+              className={props.cap === 'water' ? 'active' : ''}
+              onClick={() => props.onCap('water')}
+            >
+              Calota de mar
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+

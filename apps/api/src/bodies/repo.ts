@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { and, count, eq, sql } from 'drizzle-orm'
 import {
   slug,
@@ -10,6 +11,12 @@ import {
   type LayerKind,
   type Material,
   type PatchBodyInput,
+  type ReprojectInput,
+  type SourceProjection,
+  equirectHeight,
+  mercatorRowMap,
+  mercatorY,
+  remapRows,
   type RingSpec,
   type Poi,
   type SaveDocumentInput,
@@ -40,6 +47,7 @@ function toMeta(row: BodyRow): BodyMeta {
     rings: row.rings ?? null,
     axialTilt: row.axialTilt,
     retrograde: row.retrograde,
+    sourceProjection: row.sourceProjection,
     revision: row.revision,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -70,6 +78,7 @@ export async function listTree(db: Database): Promise<BodyTreeNode[]> {
       rings: bodies.rings,
       axialTilt: bodies.axialTilt,
       retrograde: bodies.retrograde,
+      sourceProjection: bodies.sourceProjection,
       revision: bodies.revision,
       createdAt: bodies.createdAt,
       updatedAt: bodies.updatedAt,
@@ -231,6 +240,7 @@ export interface NewBody {
   rings?: RingSpec | null
   axialTilt?: number
   retrograde?: boolean
+  sourceProjection?: SourceProjection
   materials: Material[]
   terrainPng: Buffer
   territoryPng?: Buffer
@@ -379,6 +389,7 @@ export async function createBody(db: Database, input: NewBody): Promise<BodyDocu
         rings: input.rings ?? null,
         axialTilt: input.axialTilt ?? 0,
         retrograde: input.retrograde ?? false,
+        sourceProjection: input.sourceProjection ?? 'equirect',
         thumbnail,
       })
       .returning({ id: bodies.id })
@@ -475,3 +486,121 @@ export async function saveDocument(
   })
   return getDocument(db, id)
 }
+
+/* ------------------------------------------------------------ reprojecao */
+
+/**
+ * Converte um corpo desenhado em Mercator para o equirretangular do app (ver
+ * projection.ts no shared). A largura fica; a altura vira W/2. As linhas da
+ * origem mudam de lugar, e o que passa da latitude que a imagem cobre vira
+ * calota polar: no terreno, o material escolhido; em paises e biomas, nada.
+ * Pontos e posicoes de nome descem junto.
+ *
+ * 'replace' troca este corpo, com a mesma checagem de revisao do Salvar.
+ * 'copy' cria um corpo novo (ids novos, sem as luas) e deixa o original.
+ */
+export async function reprojectBody(
+  db: Database,
+  id: string,
+  input: ReprojectInput,
+): Promise<BodyDocument> {
+  const doc = await getDocument(db, id)
+  if (doc.sourceProjection === 'mercator') {
+    throw conflict('Este corpo ja foi convertido de Mercator. Converter de novo o espremeria outra vez')
+  }
+  if (doc.revision !== input.expectedRevision) {
+    throw conflict('Este mapa mudou depois que voce o abriu. Recarregue e tente de novo')
+  }
+
+  let materialsOut = doc.materials
+  let capCode: number
+  if ('code' in input.cap) {
+    capCode = input.cap.code
+    if (!doc.materials.some((m) => m.code === capCode)) {
+      throw badRequest('O material escolhido para as calotas nao existe neste corpo')
+    }
+  } else {
+    capCode = doc.materials.reduce((max, m) => Math.max(max, m.code), -1) + 1
+    materialsOut = [...doc.materials, { code: capCode, texture: null, ...input.cap.material }]
+  }
+
+  const W = doc.width
+  const srcH = doc.height
+  const dstH = equirectHeight(W)
+  const rowMap = mercatorRowMap(W, srcH, dstH)
+  const [terrainSrc, territorySrc, biomeSrc] = await Promise.all(
+    (['terrain', 'territory', 'biome'] as const).map(async (kind) =>
+      (await decodeLayerPng(await getLayer(db, id, kind))).layer,
+    ),
+  )
+  const terrain = remapRows(terrainSrc, W, rowMap, [capCode])
+  const territory = remapRows(territorySrc, W, rowMap, [0])
+  const biome = remapRows(biomeSrc, W, rowMap, [0])
+  const moveY = (y: number) => Math.min(dstH - 0.5, Math.max(0.5, mercatorY(y, W, srcH, dstH)))
+
+  const pointsOut = doc.pois.map((p) => ({ ...p, y: moveY(p.y) }))
+  const territoriesOut = doc.territories.map((t) => ({
+    ...t,
+    labelPos: t.labelPos ? ([t.labelPos[0], moveY(t.labelPos[1])] as [number, number]) : undefined,
+  }))
+  const [terrainPng, territoryPng, biomePng] = await Promise.all([
+    encodeLayerPng(terrain, W, dstH),
+    encodeLayerPng(territory, W, dstH),
+    encodeLayerPng(biome, W, dstH),
+  ])
+
+  if (input.mode === 'copy') {
+    return createBody(db, {
+      name: input.name ?? doc.name + ' (Mercator)',
+      description: doc.description,
+      radiusKm: doc.radiusKm,
+      parentId: doc.parentId,
+      width: W,
+      height: dstH,
+      origin: doc.origin,
+      rings: doc.rings,
+      axialTilt: doc.axialTilt,
+      retrograde: doc.retrograde,
+      sourceProjection: 'mercator',
+      materials: materialsOut,
+      terrainPng,
+      territoryPng,
+      biomePng,
+      territories: territoriesOut.map((t) => ({ ...t, id: randomUUID() })),
+      biomes: doc.biomes.map((b) => ({ ...b, id: randomUUID() })),
+      pois: pointsOut.map((p) => ({ ...p, id: randomUUID() })),
+    })
+  }
+
+  const thumbnail = await renderThumbnail(terrain, W, dstH, materialsOut, {
+    layer: territory,
+    entities: doc.territories,
+  })
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(bodies)
+      .set({
+        height: dstH,
+        sourceProjection: 'mercator',
+        thumbnail,
+        revision: sql`${bodies.revision} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(bodies.id, id), eq(bodies.revision, input.expectedRevision)))
+      .returning({ id: bodies.id })
+    if (updated.length === 0) {
+      throw conflict('Este mapa mudou depois que voce o abriu. Recarregue e tente de novo')
+    }
+    await replaceContent(tx, id, {
+      materials: materialsOut,
+      territories: territoriesOut,
+      biomes: doc.biomes,
+      pois: pointsOut,
+    })
+    await upsertLayer(tx, id, 'terrain', terrainPng)
+    await upsertLayer(tx, id, 'territory', territoryPng)
+    await upsertLayer(tx, id, 'biome', biomePng)
+  })
+  return getDocument(db, id)
+}
+

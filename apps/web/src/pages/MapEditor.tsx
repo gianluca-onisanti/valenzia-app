@@ -15,6 +15,7 @@ import { IsolatedView } from '../components/IsolatedView'
 import { GlobeView, type GlobeLines } from '../components/GlobeView'
 import { borderStroke, drawScene } from '../lib/vectorPaint'
 import { BodySettingsDialog } from '../components/BodySettingsDialog'
+import { ReprojectDialog } from '../components/ReprojectDialog'
 import { useBody, type LoadedBody } from '../hooks/useBody'
 import { BIOMES, COUNTRY_COLORS, SEA_COLORS, ZONE_COLORS } from '../lib/biomes'
 import { POI_TYPES, POI_TYPE_LIST } from '../lib/poiTypes'
@@ -140,6 +141,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
   /** Alguem salvou este mapa em outro lugar: salvar daqui sobrescreveria. */
   const [conflict, setConflict] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [reprojectOpen, setReprojectOpen] = useState(false)
   const [parent, setParent] = useState<{ id: string; name: string } | null>(null)
 
   const [selection, setSelection] = useState<Selection>(null)
@@ -825,7 +827,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
-      if (settingsOpen) return
+      if (settingsOpen || reprojectOpen) return
       // Com o recorte aberto, o teclado e so dele: trocar de ferramenta por
       // tras do modal deixaria o usuario pintando sem ver.
       if (isolated !== null) {
@@ -867,7 +869,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [placingPoi, undo, selection, deletePoi, isolated, globe, settingsOpen, dirty, busy, save])
+  }, [placingPoi, undo, selection, deletePoi, isolated, globe, settingsOpen, reprojectOpen, dirty, busy, save])
 
   /* -------------------------------------------------------------- paleta */
   const palette: Palette = useMemo(() => {
@@ -1172,6 +1174,27 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
         />
       )}
 
+      {reprojectOpen && (
+        <ReprojectDialog
+          body={meta}
+          materials={world.materials}
+          source={mapRef.current?.texture() ?? null}
+          dirty={dirty}
+          onClose={() => setReprojectOpen(false)}
+          onDone={async (doc, mode) => {
+            setReprojectOpen(false)
+            if (mode === 'copy') {
+              navigate('/atlas/' + doc.id)
+              return
+            }
+            // As camadas mudaram de tamanho: o rascunho antigo nao serve mais.
+            await clearDraft(meta.id)
+            setDirty(false)
+            onReload()
+          }}
+        />
+      )}
+
       {settingsOpen && (
         <BodySettingsDialog
           body={meta}
@@ -1185,6 +1208,10 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
             await clearDraft(meta.id)
             setDirty(false)
             navigate('/atlas')
+          }}
+          onReproject={() => {
+            setSettingsOpen(false)
+            setReprojectOpen(true)
           }}
         />
       )}

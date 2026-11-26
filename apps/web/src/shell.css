@@ -754,3 +754,26 @@ a.chip {
 .ring-fields input[type='range'] {
   width: 100%;
 }
+
+/* ------------------------------------------------------- reprojecao */
+
+.reproject-globes {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.reproject-globe {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.reproject-globe canvas {
+  background: radial-gradient(circle at 50% 50%, #16222e, #0a1016 75%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}

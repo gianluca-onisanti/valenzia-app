@@ -67,7 +67,7 @@ que já tem luas não pode virar lua.
 
 | Tabela | O que guarda |
 | --- | --- |
-| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), inclinação do eixo (`axial_tilt`, graus), sentido da rotação (`retrograde`), miniatura, `revision` |
+| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), inclinação do eixo (`axial_tilt`, graus), sentido da rotação (`retrograde`), projeção de origem (`source_projection`), miniatura, `revision` |
 | `materials` | os materiais de terreno do corpo: nome, fase (`solid`, `liquid` ou `gas`), cor, textura |
 | `layers` | as três camadas raster, em PNG (`terrain`, `territory`, `biome`) |
 | `territories` | países, mares e zonas: nome, cor, ficha (governo, população...) |
@@ -197,6 +197,30 @@ material menores que um limite (de 16 a 1024 px): cada mancha vira o
 material que mais a cerca. A contagem aparece antes de limpar, e dá para
 desfazer. Mapas extraídos de imagem costumam trazer dezenas delas, que na
 esfera, com a costa ligada, viram pontinhos escuros.
+
+### Projeção: equirretangular e Mercator
+
+Todo mapa é **guardado em equirretangular**: cada linha do PNG é uma
+latitude, de polo a polo, e o globo, as áreas e as ferramentas contam com
+isso. Mas um mapa-mundi desenhado "plano" costuma estar, na prática, em
+**Mercator**, e lido como equirretangular a terra encostada no topo e no
+fundo vira cunha no polo.
+
+- **Na criação a partir de imagem**, escolha a projeção da imagem. Em
+  Mercator, as linhas são levadas para a latitude certa e a imagem passa a
+  cobrir só até a latitude que a proporção dela permite (4096×1878 cobre
+  ±63,4°; uma 2:1 cobre ±66,5°). O resto vira **calota polar**, de gelo
+  (material novo) ou de mar. O mapa sai 2:1.
+- **Num corpo existente**, a engrenagem tem **Converter de Mercator...**, com
+  dois globos de prévia (antes e depois, vistos do polo ou do equador), a
+  escolha do material das calotas e o resultado: **criar uma cópia** (o
+  padrão, que não mexe no original) ou **substituir este**. Países, biomas,
+  pontos e posições de nome acompanham. Precisa estar tudo salvo antes.
+- A conversão marca o corpo (`source_projection = 'mercator'`) e não pode
+  ser feita duas vezes, porque espremeria o desenho de novo.
+- A conta fica em `packages/shared/src/projection.ts`: só as linhas mudam
+  de lugar (a longitude é a mesma nas duas projeções), e a escala no
+  equador é igual.
 
 ### Guias de latitude
 

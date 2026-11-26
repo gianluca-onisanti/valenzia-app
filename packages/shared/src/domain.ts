@@ -197,6 +197,12 @@ export interface BodyMeta {
    * Venus). No globo, inverte o sentido do giro automatico.
    */
   retrograde: boolean
+  /**
+   * Em que projecao o desenho original foi feito. O mapa guardado e sempre
+   * equirretangular; 'mercator' marca um desenho ja convertido (ver
+   * projection.ts), para ninguem converter duas vezes.
+   */
+  sourceProjection: 'equirect' | 'mercator'
   /** Sobe a cada Salvar; o editor manda a que leu para detectar conflito. */
   revision: number
   createdAt: string
