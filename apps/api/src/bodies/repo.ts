@@ -38,6 +38,7 @@ function toMeta(row: BodyRow): BodyMeta {
     origin: row.origin,
     parentId: row.parentId,
     rings: row.rings ?? null,
+    axialTilt: row.axialTilt,
     revision: row.revision,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -66,6 +67,7 @@ export async function listTree(db: Database): Promise<BodyTreeNode[]> {
       height: bodies.height,
       origin: bodies.origin,
       rings: bodies.rings,
+      axialTilt: bodies.axialTilt,
       revision: bodies.revision,
       createdAt: bodies.createdAt,
       updatedAt: bodies.updatedAt,
@@ -225,6 +227,7 @@ export interface NewBody {
   height: number
   origin: BodyOrigin
   rings?: RingSpec | null
+  axialTilt?: number
   materials: Material[]
   terrainPng: Buffer
   territoryPng?: Buffer
@@ -371,6 +374,7 @@ export async function createBody(db: Database, input: NewBody): Promise<BodyDocu
         height: input.height,
         origin: input.origin,
         rings: input.rings ?? null,
+        axialTilt: input.axialTilt ?? 0,
         thumbnail,
       })
       .returning({ id: bodies.id })
@@ -405,6 +409,7 @@ export async function patchBody(
     if (patch.radiusKm !== undefined) set.radiusKm = patch.radiusKm
     if (patch.parentId !== undefined) set.parentId = patch.parentId
     if (patch.rings !== undefined) set.rings = patch.rings
+    if (patch.axialTilt !== undefined) set.axialTilt = patch.axialTilt
     await tx.update(bodies).set(set).where(eq(bodies.id, id))
   })
   return getDocument(db, id)

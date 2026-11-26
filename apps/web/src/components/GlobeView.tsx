@@ -20,8 +20,8 @@ interface GlobeViewProps {
   body: BodyMeta
   base: MapBase
   world: World
-  /** A textura do mapa, pronta, vinda do proprio editor. */
-  source: HTMLCanvasElement | null
+  /** Monta a textura do mapa, com ou sem fronteiras e costa. */
+  makeTexture: (borders: boolean) => HTMLCanvasElement | null
   /** Pontos a mostrar; vazio esconde todos. */
   pois: Poi[]
   onSelectPoi: (id: string) => void
@@ -45,60 +45,105 @@ const SPIN = 0.0004
 /** A lua mais proxima da uma volta no ceu a cada ~30 segundos. */
 const ORBIT = 0.00021
 
-/** Um corpo do mesmo sistema, visto do corpo em foco. */
-interface Companion {
+const rad = (deg: number) => (deg * Math.PI) / 180
+
+/**
+ * Um corpo do sistema, no seu lugar da disposicao comum. A disposicao e uma
+ * so, medida em raios do planeta (o planeta tem tamanho 1, no centro), e nao
+ * depende de quem esta em foco: trocar de foco so muda o centro da camera e o
+ * zoom. Assim, a lua vista do planeta e o planeta visto da lua guardam
+ * exatamente a mesma proporcao de tamanho e de distancia.
+ */
+interface Member {
   body: BodySummary
-  texture: Texture
-  /** Raio na tela, em multiplos do raio do foco. */
+  /** Raio aparente, em raios do planeta. */
   size: number
-  /** Distancia da orbita aparente, em multiplos do raio do foco. */
-  distance: number
+  /** Raio da orbita em volta do planeta, em raios do planeta (0 = o planeta). */
+  orbit: number
   phase: number
   speed: number
   stops: RingStop[] | null
 }
 
-/**
- * Tamanho aparente de um vizinho. A escala real nao cabe na tela (a Lua vista
- * da Terra a escala ficaria a 60 raios de distancia), entao as distancias sao
- * de mentira e os tamanhos sao comprimidos -- grande continua maior que
- * pequeno, mas um satelite minusculo ainda aparece como um ponto.
- */
-function apparentSize(ratio: number): number {
-  // Menor que o foco: encolhe devagar ate virar um ponto. Maior (o planeta
-  // visto da lua): cresce com moderacao e domina o fundo sem engolir a tela.
-  if (ratio <= 1) return Math.max(0.05, Math.pow(ratio, 0.8))
-  return Math.min(2, Math.pow(ratio, 0.5))
+interface Companion extends Member {
+  texture: Texture
 }
 
 /**
- * Os vizinhos de um corpo: o planeta mostra as luas; a lua mostra o planeta
- * e as irmas. Distancias em fila, de dentro para fora, sem encostar.
+ * Tamanho aparente de uma lua, relativo ao planeta. A escala real nao cabe
+ * na tela (a Lua vista da Terra ficaria a 60 raios de distancia), entao as
+ * distancias sao de mentira e os tamanhos sao comprimidos -- grande continua
+ * maior que pequeno, mas um satelite minusculo ainda aparece como um ponto.
  */
-function layout(focus: BodyMeta, bodies: BodySummary[]) {
-  let edge = Math.max(1, focus.rings?.outer ?? 0) + 0.9
-  return bodies.map((body, k) => {
-    const size = apparentSize(body.radiusKm / focus.radiusKm)
+function apparentSize(ratio: number): number {
+  return Math.min(3, Math.max(0.05, Math.pow(ratio, 0.8)))
+}
+
+/** O sistema inteiro: o planeta no centro e as luas em fila, sem encostar. */
+function systemLayout(planet: BodySummary, moons: BodySummary[]): Member[] {
+  const members: Member[] = [
+    {
+      body: planet,
+      size: 1,
+      orbit: 0,
+      phase: 0,
+      speed: 0,
+      stops: planet.rings ? ringStops(planet.rings) : null,
+    },
+  ]
+  let edge = Math.max(1, planet.rings?.outer ?? 0) + 0.9
+  moons.forEach((body, k) => {
+    const size = apparentSize(body.radiusKm / planet.radiusKm)
     const reach = size * Math.max(1, body.rings?.outer ?? 0)
-    const distance = edge + reach
-    edge = distance + reach + 0.6
-    return {
+    const orbit = edge + reach
+    edge = orbit + reach + 0.6
+    members.push({
       body,
       size,
-      distance,
+      orbit,
       // Fases espalhadas pelo angulo de ouro: ninguem nasce em cima de ninguem.
       phase: k * 2.39996 + 0.6,
       speed: ORBIT / (1 + k * 0.55),
       stops: body.rings ? ringStops(body.rings) : null,
-    }
+    })
   })
+  return members
 }
 
-/** Quantos raios do foco o sistema ocupa para cada lado. */
-function extentOf(focus: BodyMeta, companions: Pick<Companion, 'size' | 'distance' | 'body'>[]) {
-  let extent = Math.max(1, focus.rings?.outer ?? 0)
-  for (const c of companions) {
-    extent = Math.max(extent, c.distance + c.size * Math.max(1, c.body.rings?.outer ?? 0))
+/** Onde o membro esta no plano do equador do planeta: [x, profundidade]. */
+function positionOf(m: Member, t: number): [number, number] {
+  if (!m.orbit) return [0, 0]
+  const a = m.phase + m.speed * t
+  return [m.orbit * Math.sin(a), m.orbit * Math.cos(a)]
+}
+
+/**
+ * Onde cai na tela (relativo ao centro do foco) um ponto do plano do equador
+ * do planeta, a (rx, rz) do foco: gira pela camera, achata pela inclinacao do
+ * olhar e tomba com o eixo do planeta. A mesma conta serve ao desenho e ao
+ * enquadramento.
+ */
+function screenOffset(
+  rx: number,
+  rz: number,
+  cam: number,
+  sinLat: number,
+  roll: number,
+  unit: number,
+): [number, number] {
+  const sx = rx * Math.cos(cam) - rz * Math.sin(cam)
+  const sz = rz * Math.cos(cam) + rx * Math.sin(cam)
+  const ox = sx * unit
+  const oy = sz * sinLat * unit
+  return [ox * Math.cos(roll) - oy * Math.sin(roll), ox * Math.sin(roll) + oy * Math.cos(roll)]
+}
+
+/** Quantos raios do foco o sistema pode ocupar para cada lado. */
+function extentFrom(focus: Member, others: Member[]): number {
+  let extent = Math.max(1, focus.body.rings?.outer ?? 0)
+  for (const o of others) {
+    const reach = o.size * Math.max(1, o.body.rings?.outer ?? 0)
+    extent = Math.max(extent, (o.orbit + focus.orbit + reach) / focus.size)
   }
   return extent
 }
@@ -138,8 +183,19 @@ export function GlobeView(props: GlobeViewProps) {
   const [spinning, setSpinning] = useState(true)
   const [showPois, setShowPois] = useState(true)
   const [showSystem, setShowSystem] = useState(true)
-  const [companions, setCompanions] = useState<Companion[]>([])
+  /** Fronteiras e costa: desligadas por padrao, porque serrilham na esfera. */
+  const [showBorders, setShowBorders] = useState(false)
+  const [system, setSystem] = useState<{ focus: Member; others: Companion[] } | null>(null)
+  const companions = useMemo(() => system?.others ?? [], [system])
+  /**
+   * Para onde a camera olha no sistema. So o arrasto mexe nela: o giro
+   * automatico gira o corpo no proprio eixo, sem carregar o ceu junto.
+   */
+  const camLonRef = useRef(0)
+  const camHomeRef = useRef(0)
   const draggingRef = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  /** A pessoa ja girou a camera: o enquadramento automatico nao mexe mais nela. */
+  const draggedRef = useRef(false)
   /** A roda do mouse ja mexeu no zoom: o enquadramento automatico para. */
   const zoomedRef = useRef(false)
   /** Enquanto a mao gira, desenha em meia resolucao: quatro vezes menos conta. */
@@ -163,16 +219,15 @@ export function GlobeView(props: GlobeViewProps) {
     api
       .listBodies()
       .then(async (tree) => {
-        let neighbours: BodySummary[] = []
-        if (body.parentId) {
-          const parent = tree.find((p) => p.id === body.parentId)
-          if (parent) neighbours = [parent, ...parent.moons.filter((m) => m.id !== body.id)]
-        } else {
-          neighbours = tree.find((p) => p.id === body.id)?.moons ?? []
-        }
-        const placed = layout(body, neighbours)
-        const textures = await Promise.all(placed.map((c) => loadTexture(c.body)))
-        if (alive) setCompanions(placed.map((c, i) => ({ ...c, texture: textures[i] })))
+        const planet = tree.find((p) => p.id === (body.parentId ?? body.id))
+        if (!planet) return
+        const members = systemLayout(planet, planet.moons)
+        const focus = members.find((m) => m.body.id === body.id)
+        if (!focus) return
+        const others = members.filter((m) => m !== focus)
+        const textures = await Promise.all(others.map((m) => loadTexture(m.body)))
+        if (!alive) return
+        setSystem({ focus, others: others.map((m, i) => ({ ...m, texture: textures[i] })) })
       })
       .catch(() => {
         // Sem o atlas, o globo segue sozinho.
@@ -188,14 +243,45 @@ export function GlobeView(props: GlobeViewProps) {
   // de se ajustar quando a pessoa mexe no zoom.
   useEffect(() => {
     if (!size.w || !size.h || zoomedRef.current) return
-    const extent = extentOf(body, visible)
+    const extent = system ? extentFrom(system.focus, visible) : 1
     const fit = Math.min(size.w, size.h) * 0.42
     const wide = (size.w * 0.47) / extent
-    // O foco nao encolhe alem de um quarto da tela so para caber o sistema
-    // inteiro: o que sobrar sai pela borda nas pontas da orbita.
-    const floor = Math.min(size.w, size.h) * 0.24
-    setRadius(Math.max(MIN_R, floor, Math.min(fit, wide)))
-  }, [size, body, visible])
+    // O foco nao encolhe demais so para caber o sistema inteiro: o que sobrar
+    // sai pela borda (a roda do mouse afasta a camera para ver tudo). Numa
+    // lua o piso e menor: o planeta, na escala certa, e bem maior que ela.
+    const floor = Math.min(size.w, size.h) * (system?.focus.orbit ? 0.1 : 0.24)
+    const next = Math.max(MIN_R, floor, Math.min(fit, wide))
+    setRadius(next)
+
+    // Numa lua, o planeta (na escala certa) fica longe e grande. A camera
+    // nasce com ele por tras, puxado para o lado so o bastante para o centro
+    // dele cair perto da borda da tela: aparece enorme no ceu, sem tampar a
+    // lua. Depois que a pessoa arrasta, a camera e dela.
+    const focus = system?.focus
+    if (focus?.orbit && !draggedRef.current) {
+      // Procura, entre 360 angulos de camera, o que poe o centro do planeta
+      // mais perto do alto a esquerda da tela -- com a mesma conta do
+      // desenho, inclinacao e achatamento inclusos.
+      const planet = system?.others.find((o) => o.orbit === 0)
+      const roll = rad(planet?.body.axialTilt ?? 0)
+      const unit = next / focus.size
+      const [fx, fz] = positionOf(focus, 0)
+      const want = { x: -size.w * 0.3, y: -size.h * 0.32 }
+      let best = 0
+      let bestError = Infinity
+      for (let i = 0; i < 360; i++) {
+        const cam = (i / 360) * Math.PI * 2
+        const [x, y] = screenOffset(-fx, -fz, cam, Math.sin(0.35), roll, unit)
+        const error = Math.hypot(x - want.x, y - want.y)
+        if (error < bestError) {
+          bestError = error
+          best = cam
+        }
+      }
+      camHomeRef.current = best
+      camLonRef.current = best
+    }
+  }, [size, system, visible])
 
   /**
    * A textura, reduzida uma vez e lida em memoria. Fica num efeito, e nao num
@@ -203,8 +289,10 @@ export function GlobeView(props: GlobeViewProps) {
    * durante a renderizacao pegaria a textura do quadro anterior.
    */
   const [texture, setTexture] = useState<Texture | null>(null)
+  const { makeTexture } = props
   useEffect(() => {
-    if (!props.source) return
+    const source = makeTexture(showBorders)
+    if (!source) return
     const h = Math.round((TEX_WIDTH * base.height) / base.width)
     const canvas = document.createElement('canvas')
     canvas.width = TEX_WIDTH
@@ -213,15 +301,26 @@ export function GlobeView(props: GlobeViewProps) {
     if (!ctx) return
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(props.source, 0, 0, TEX_WIDTH, h)
+    ctx.drawImage(source, 0, 0, TEX_WIDTH, h)
     const image = ctx.getImageData(0, 0, TEX_WIDTH, h)
     setTexture({ data: image.data, width: TEX_WIDTH, height: h })
-  }, [props.source, props.version, base.width, base.height])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBorders, props.version, base.width, base.height])
 
   const sphere: Sphere = useMemo(
     () => ({ cx: size.w / 2, cy: size.h / 2, r: radius }),
     [size, radius],
   )
+
+  /** Inclinacao do corpo em foco (ao vivo, vem do editor). */
+  const focusRoll = rad(body.axialTilt ?? 0)
+  /**
+   * As luas orbitam no plano do equador do planeta: o sistema tomba com a
+   * inclinacao dele. No planeta, e a do proprio foco.
+   */
+  const systemRoll = body.parentId
+    ? rad(companions.find((c) => c.orbit === 0)?.body.axialTilt ?? 0)
+    : focusRoll
 
   /* ---------------------------------------------------- o corpo em foco */
   // A esfera do foco e a parte cara: so e refeita quando gira ou muda de
@@ -231,12 +330,15 @@ export function GlobeView(props: GlobeViewProps) {
   useEffect(() => {
     if (!texture || !size.w || !size.h || !radius) return
     // Teto de 1,5: o globo e uma imagem macia, e cada ponto a mais custa um
-    // seno e um arco-tangente. Girando, anda de 2 em 2 pixels.
+    // seno e um arco-tangente.
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     dprRef.current = dpr
-    const step = coarseRef.current || spinning ? 2 : 1
-    const w = Math.round(size.w * dpr)
-    const h = Math.round(size.h * dpr)
+    // Em movimento (girando ou arrastando), desenha em meia resolucao e a
+    // cena amplia com suavizacao: 4x menos conta, e o resultado fica macio
+    // em vez de serrilhado. Parado, resolucao cheia.
+    const scale = coarseRef.current || spinning ? 0.5 : 1
+    const w = Math.max(1, Math.round(size.w * dpr * scale))
+    const h = Math.max(1, Math.round(size.h * dpr * scale))
     const canvas = focusRef.current ?? document.createElement('canvas')
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w
@@ -245,20 +347,23 @@ export function GlobeView(props: GlobeViewProps) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     const image = ctx.createImageData(w, h)
+    const k = dpr * scale
     renderGlobe(
       image,
       texture,
-      { cx: sphere.cx * dpr, cy: sphere.cy * dpr, r: sphere.r * dpr },
+      { cx: sphere.cx * k, cy: sphere.cy * k, r: sphere.r * k },
       rotation,
-      step,
+      1,
+      focusRoll,
     )
     ctx.putImageData(image, 0, 0)
     focusRef.current = canvas
-  }, [texture, sphere, rotation, size, radius, spinning])
+  }, [texture, sphere, rotation, size, radius, spinning, focusRoll])
 
   /* ---------------------------------------------------- a cena, a cada quadro */
-  const live = useRef({ rotation, sphere, visible, rings: body.rings })
-  live.current = { rotation, sphere, visible, rings: body.rings }
+  const focusMember = system?.focus ?? null
+  const live = useRef({ rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll })
+  live.current = { rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll }
   const focusStops = useMemo(() => (body.rings ? ringStops(body.rings) : null), [body.rings])
   const focusStopsRef = useRef(focusStops)
   focusStopsRef.current = focusStops
@@ -270,8 +375,13 @@ export function GlobeView(props: GlobeViewProps) {
     let raf = 0
     const start = performance.now()
 
-    const sprite = (c: Companion, pr: number, lat: number) => {
-      const key = Math.round(pr) + ':' + lat.toFixed(3) + ':' + (coarseRef.current ? 2 : 1)
+    /** Teto da esfera de um vizinho: maior que isso, a imagem e esticada. */
+    const SPRITE_MAX = 420
+    const sprite = (c: Companion, wanted: number, lat: number) => {
+      const pr = Math.min(wanted, SPRITE_MAX)
+      const roll = rad(c.body.axialTilt ?? 0)
+      const key =
+        Math.round(pr) + ':' + lat.toFixed(3) + ':' + roll.toFixed(3) + ':' + (coarseRef.current ? 2 : 1)
       const cached = spritesRef.current.get(c.body.id)
       if (cached && cached.key === key) return cached.canvas
       const d = Math.max(2, Math.ceil(pr * 2) + 2)
@@ -282,7 +392,14 @@ export function GlobeView(props: GlobeViewProps) {
       if (!ctx) return canvas
       const image = ctx.createImageData(d, d)
       // Travado pela mare: o vizinho mostra sempre a mesma face.
-      renderGlobe(image, c.texture, { cx: d / 2, cy: d / 2, r: pr }, { lon: c.phase, lat }, coarseRef.current ? 2 : 1)
+      renderGlobe(
+        image,
+        c.texture,
+        { cx: d / 2, cy: d / 2, r: pr },
+        { lon: c.phase, lat },
+        coarseRef.current ? 2 : 1,
+        roll,
+      )
       ctx.putImageData(image, 0, 0)
       spritesRef.current.set(c.body.id, { canvas, key })
       return canvas
@@ -297,8 +414,9 @@ export function GlobeView(props: GlobeViewProps) {
       stops: RingStop[] | null,
       sinLat: number,
       half: 'back' | 'front',
+      roll: number,
     ) => {
-      if (spec && stops) drawRingHalf(ctx, x, y, r, spec, sinLat, half, stops)
+      if (spec && stops) drawRingHalf(ctx, x, y, r, spec, sinLat, half, stops, roll)
     }
 
     const draw = (now: number) => {
@@ -306,38 +424,69 @@ export function GlobeView(props: GlobeViewProps) {
       const canvas = canvasRef.current
       const focus = focusRef.current
       if (!canvas || !focus) return
-      if (canvas.width !== focus.width || canvas.height !== focus.height) {
-        canvas.width = focus.width
-        canvas.height = focus.height
+      const full = live.current.sphere
+      const cw = Math.round(full.cx * 2 * dprRef.current)
+      const ch = Math.round(full.cy * 2 * dprRef.current)
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw
+        canvas.height = ch
       }
       const ctx = canvas.getContext('2d')
       if (!ctx) return
-      const { rotation: rot, sphere: sp, visible: comps, rings } = live.current
+      const {
+        rotation: rot,
+        sphere: sp,
+        visible: comps,
+        rings,
+        focusMember: fm,
+        focusRoll: froll,
+        systemRoll: sroll,
+      } = live.current
       const dpr = dprRef.current
       const cx = sp.cx * dpr
       const cy = sp.cy * dpr
       const r = sp.r * dpr
       const sinLat = Math.sin(rot.lat)
-      const t = now - start
+      // Vista de uma lua, o ceu anda 5x mais devagar: o planeta enorme nao
+      // sai de quadro em poucos segundos. As posicoes sao as mesmas.
+      const t = (now - start) * (fm?.orbit ? 0.2 : 1)
+      const cam = camLonRef.current
+      const cos = Math.cos(cam)
+      const sin = Math.sin(cam)
+      // Pixels por raio do planeta: o foco tem `size` raios e ocupa `r`.
+      const unit = fm ? r / fm.size : r
+      const [fx, fz] = fm ? positionOf(fm, t) : [0, 0]
 
-      // Onde cada vizinho esta agora: na orbita aparente, no plano do equador.
+      // Onde cada vizinho esta agora, relativo ao foco, no plano do equador
+      // do planeta, girado pela camera e achatado pela inclinacao.
       const placed = comps.map((c) => {
-        const phi = c.phase + c.speed * t - rot.lon
-        return {
-          c,
-          x: cx + c.distance * r * Math.sin(phi),
-          y: cy + c.distance * r * sinLat * Math.cos(phi),
-          depth: Math.cos(phi),
-          pr: c.size * r,
-        }
+        const [px, pz] = positionOf(c, t)
+        const rx = px - fx
+        const rz = pz - fz
+        const sz = rz * cos + rx * sin
+        const pr = c.size * unit
+        // A orbita no plano do equador do planeta, tombada com ele.
+        const [ox, oy] = screenOffset(rx, rz, cam, sinLat, sroll, unit)
+        const x = cx + ox
+        const y = cy + oy
+        const reach = pr * Math.max(1, c.body.rings?.outer ?? 0)
+        const onScreen =
+          x + reach > 0 && x - reach < canvas.width && y + reach > 0 && y - reach < canvas.height
+        return { c, x, y, depth: sz, pr, onScreen }
       })
       placed.sort((a, b) => a.depth - b.depth)
 
       const drawCompanion = (p: (typeof placed)[number]) => {
-        ring(ctx, p.x, p.y, p.pr, p.c.body.rings, p.c.stops, sinLat, 'back')
+        if (!p.onScreen) return
+        const roll = rad(p.c.body.axialTilt ?? 0)
+        ring(ctx, p.x, p.y, p.pr, p.c.body.rings, p.c.stops, sinLat, 'back', roll)
         const img = sprite(p.c, p.pr, rot.lat)
-        ctx.drawImage(img, p.x - img.width / 2, p.y - img.height / 2)
-        ring(ctx, p.x, p.y, p.pr, p.c.body.rings, p.c.stops, sinLat, 'front')
+        // A esfera pode ter sido desenhada menor (teto) e e esticada aqui.
+        const scale = p.pr / Math.min(p.pr, SPRITE_MAX)
+        const dw = img.width * scale
+        const dh = img.height * scale
+        ctx.drawImage(img, p.x - dw / 2, p.y - dh / 2, dw, dh)
+        ring(ctx, p.x, p.y, p.pr, p.c.body.rings, p.c.stops, sinLat, 'front', roll)
       }
 
       // Os vizinhos estao longe: ficam sempre no fundo, atras do corpo em
@@ -345,15 +494,17 @@ export function GlobeView(props: GlobeViewProps) {
       // esta olhando. Entre eles, o mais distante primeiro.
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       for (const p of placed) drawCompanion(p)
-      ring(ctx, cx, cy, r, rings, focusStopsRef.current, sinLat, 'back')
-      ctx.drawImage(focus, 0, 0)
-      ring(ctx, cx, cy, r, rings, focusStopsRef.current, sinLat, 'front')
+      ring(ctx, cx, cy, r, rings, focusStopsRef.current, sinLat, 'back', froll)
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(focus, 0, 0, canvas.width, canvas.height)
+      ring(ctx, cx, cy, r, rings, focusStopsRef.current, sinLat, 'front', froll)
 
       // Os nomes acompanham os corpos; quem esta escondido atras do foco some.
       for (const p of placed) {
         const label = labelsRef.current.get(p.c.body.id)
         if (!label) continue
-        const hidden = Math.hypot(p.x - cx, p.y - cy) < r
+        const hidden = !p.onScreen || Math.hypot(p.x - cx, p.y - cy) < r
         const hit = Math.max(14, (p.pr * 2) / dpr)
         label.style.display = hidden ? 'none' : ''
         label.style.left = p.x / dpr + 'px'
@@ -372,8 +523,12 @@ export function GlobeView(props: GlobeViewProps) {
     let last = performance.now()
     const step = (now: number) => {
       const dt = now - last
-      last = now
-      setRotation((r) => ({ ...r, lon: r.lon + SPIN * dt }))
+      // ~30 quadros por segundo bastam para um giro lento, e deixam folga
+      // para a esfera em resolucao cheia.
+      if (dt >= 40) {
+        last = now
+        setRotation((r) => ({ ...r, lon: r.lon + SPIN * dt }))
+      }
       frameRef.current = requestAnimationFrame(step)
     }
     frameRef.current = requestAnimationFrame(step)
@@ -394,14 +549,22 @@ export function GlobeView(props: GlobeViewProps) {
     if (!drag) return
     const dx = event.clientX - drag.x
     const dy = event.clientY - drag.y
-    if (Math.hypot(dx, dy) > 3) drag.moved = true
+    if (Math.hypot(dx, dy) > 3) {
+      drag.moved = true
+      draggedRef.current = true
+    }
     drag.x = event.clientX
     drag.y = event.clientY
     // Um pixel de arrasto empurra o mesmo tanto de superficie, qualquer que
-    // seja o tamanho do globo na tela.
+    // seja o tamanho do globo na tela. O arrasto e lido no referencial do
+    // corpo inclinado, para a superficie seguir o mouse. A camera do sistema
+    // gira junto.
+    const bx = dx * Math.cos(focusRoll) + dy * Math.sin(focusRoll)
+    const by = -dx * Math.sin(focusRoll) + dy * Math.cos(focusRoll)
+    camLonRef.current -= bx / sphere.r
     setRotation((r) => ({
-      lon: r.lon - dx / sphere.r,
-      lat: clampLat(r.lat + dy / sphere.r),
+      lon: r.lon - bx / sphere.r,
+      lat: clampLat(r.lat + by / sphere.r),
     }))
   }
 
@@ -433,11 +596,11 @@ export function GlobeView(props: GlobeViewProps) {
     return props.pois
       .map((poi) => {
         const [lon, lat] = lonLatOf(poi.x, poi.y, base.width, base.height)
-        const p = projectPoint(lon, lat, sphere, rotation)
+        const p = projectPoint(lon, lat, sphere, rotation, focusRoll)
         return { poi, ...p }
       })
       .filter((m) => m.visible)
-  }, [props.pois, showPois, sphere, rotation, base.width, base.height, radius])
+  }, [props.pois, showPois, sphere, rotation, base.width, base.height, radius, focusRoll])
 
   return (
     <div className="globe">
@@ -460,6 +623,13 @@ export function GlobeView(props: GlobeViewProps) {
         >
           Pontos
         </button>
+        <button
+          className={'chip' + (showBorders ? ' active' : '')}
+          title="Fronteiras e linha de costa na esfera"
+          onClick={() => setShowBorders((v) => !v)}
+        >
+          Fronteiras
+        </button>
         {companions.length > 0 && (
           <button
             className={'chip' + (showSystem ? ' active' : '')}
@@ -473,6 +643,8 @@ export function GlobeView(props: GlobeViewProps) {
           className="chip"
           onClick={() => {
             setRotation({ lon: 0, lat: 0.35 })
+            camLonRef.current = camHomeRef.current
+            draggedRef.current = false
             zoomedRef.current = false
             setSize((s) => ({ ...s }))
           }}

@@ -67,6 +67,10 @@ function basis(rot: Rotation) {
  *
  * `step` maior desenha em resolucao menor (usado enquanto a mao arrasta): o
  * laco anda de 2 em 2 pixels e repete a cor no quadrado.
+ *
+ * `roll` e a inclinacao do eixo, em radianos, no sentido horario da tela: o
+ * corpo inteiro tomba, e o giro (rot.lon) passa a ser em volta do eixo
+ * inclinado.
  */
 export function renderGlobe(
   out: ImageData,
@@ -74,9 +78,12 @@ export function renderGlobe(
   sphere: Sphere,
   rot: Rotation,
   step = 1,
+  roll = 0,
 ): void {
   const { cx, cy, r } = sphere
   const b = basis(rot)
+  const cr = Math.cos(roll)
+  const sr = Math.sin(roll)
   const px = out.data
   const W = out.width
   const H = out.height
@@ -95,11 +102,12 @@ export function renderGlobe(
 
   for (let y = y0; y <= y1; y += step) {
     const dy = y - cy
-    const ny = -dy * invR
     for (let x = x0; x <= x1; x += step) {
       const dx = x - cx
       if (dx * dx + dy * dy > r2) continue
-      const nx = dx * invR
+      // Desfaz a inclinacao: o ponto da tela no referencial do corpo.
+      const nx = (dx * cr + dy * sr) * invR
+      const ny = -(-dx * sr + dy * cr) * invR
       const nz2 = 1 - nx * nx - ny * ny
       if (nz2 <= 0) continue
       const nz = Math.sqrt(nz2)
@@ -118,7 +126,10 @@ export function renderGlobe(
       v = v < 0 ? 0 : v >= th ? th - 1 : v
       const t = ((v | 0) * tw + (u | 0)) * 4
 
-      const dot = nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]
+      // A luz vem de um lugar fixo da tela, nao do referencial do corpo.
+      const lx = dx * invR
+      const ly = -dy * invR
+      const dot = lx * LIGHT[0] + ly * LIGHT[1] + nz * LIGHT[2]
       const shade = AMBIENT + DIFFUSE * (dot > 0 ? dot : 0)
 
       const red = tex.data[t] * shade
@@ -148,6 +159,7 @@ export function projectPoint(
   lat: number,
   sphere: Sphere,
   rot: Rotation,
+  roll = 0,
 ): { x: number; y: number; visible: boolean } {
   const b = basis(rot)
   const cosLat = Math.cos(lat)
@@ -157,9 +169,14 @@ export function projectPoint(
   const nz = wx * b.fx + wy * b.fy + wz * b.fz
   const nx = wx * b.rx + wz * b.rz
   const ny = wx * b.ux + wy * b.uy + wz * b.uz
+  // Do referencial do corpo para a tela, refazendo a inclinacao.
+  const bx = nx * sphere.r
+  const by = -ny * sphere.r
+  const cr = Math.cos(roll)
+  const sr = Math.sin(roll)
   return {
-    x: sphere.cx + nx * sphere.r,
-    y: sphere.cy - ny * sphere.r,
+    x: sphere.cx + bx * cr - by * sr,
+    y: sphere.cy + bx * sr + by * cr,
     visible: nz > 0,
   }
 }

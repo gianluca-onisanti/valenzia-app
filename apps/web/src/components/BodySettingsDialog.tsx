@@ -31,6 +31,7 @@ export function BodySettingsDialog({
     parentId: body.parentId,
   })
   const [rings, setRings] = useState<RingSpec | null>(body.rings)
+  const [axialTilt, setAxialTilt] = useState(body.axialTilt ?? 0)
   const [tree, setTree] = useState<BodyTreeNode[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -64,6 +65,7 @@ export function BodySettingsDialog({
         radiusKm: value.radiusKm,
         parentId: value.parentId,
         rings,
+        axialTilt,
       })
       onSaved(saved)
       onClose()
@@ -124,7 +126,7 @@ export function BodySettingsDialog({
           hasMoons={moons.length > 0}
         />
 
-        <RingEditor value={rings} onChange={setRings} />
+        <GlobeLook tilt={axialTilt} onTilt={setAxialTilt} rings={rings} onRings={setRings} />
 
         {phases.length > 0 && (
           <p className="muted small">
@@ -179,30 +181,64 @@ const DEFAULT_RINGS: RingSpec = {
   seed: 1,
 }
 
-/** Liga, desliga e ajusta os aneis, com uma previa ao vivo. */
-function RingEditor({
-  value,
-  onChange,
+const TILT_PRESETS = [
+  { label: 'Reto', deg: 0 },
+  { label: 'Terra', deg: 23 },
+  { label: 'Saturno', deg: 27 },
+  { label: 'Urano', deg: 98 },
+]
+
+/**
+ * Como o corpo aparece no globo: a inclinacao do eixo e os aneis, com uma
+ * previa ao vivo dos dois.
+ */
+function GlobeLook({
+  tilt,
+  onTilt,
+  rings: value,
+  onRings: onChange,
 }: {
-  value: RingSpec | null
-  onChange: (next: RingSpec | null) => void
+  tilt: number
+  onTilt: (deg: number) => void
+  rings: RingSpec | null
+  onRings: (next: RingSpec | null) => void
 }) {
   const set = (patch: Partial<RingSpec>) => value && onChange({ ...value, ...patch })
 
   return (
     <section className="form-field form-field--wide">
-      <label className="ring-toggle">
-        <input
-          type="checkbox"
-          checked={value !== null}
-          onChange={(e) => onChange(e.target.checked ? DEFAULT_RINGS : null)}
-        />
-        <span>Aneis</span>
-      </label>
-      {value && (
-        <div className="ring-editor">
-          <RingPreview spec={value} />
-          <div className="ring-fields">
+      <span>No globo</span>
+      <div className="ring-editor">
+        <RingPreview spec={value} tilt={tilt} />
+        <div className="ring-fields">
+          <label className="form-field">
+            <span>Inclinacao do eixo: {Math.round(tilt)}°</span>
+            <input
+              type="range"
+              min={0}
+              max={180}
+              step={1}
+              value={tilt}
+              onChange={(e) => onTilt(Number(e.target.value))}
+            />
+          </label>
+          <div className="chips">
+            {TILT_PRESETS.map((p) => (
+              <button key={p.deg} type="button" className="chip" onClick={() => onTilt(p.deg)}>
+                {p.label} ({p.deg}°)
+              </button>
+            ))}
+          </div>
+          <label className="ring-toggle">
+            <input
+              type="checkbox"
+              checked={value !== null}
+              onChange={(e) => onChange(e.target.checked ? DEFAULT_RINGS : null)}
+            />
+            <span>Aneis</span>
+          </label>
+          {value && (
+            <>
             <label className="form-field">
               <span>Comeca em {value.inner.toFixed(2).replace('.', ',')}x o raio</span>
               <input
@@ -268,15 +304,16 @@ function RingEditor({
             >
               Sortear faixas
             </button>
-          </div>
+            </>
+          )}
         </div>
-      )}
+      </div>
     </section>
   )
 }
 
-/** Um planeta neutro com o anel em volta, visto de cima e de leve. */
-function RingPreview({ spec }: { spec: RingSpec }) {
+/** Um planeta neutro, com o eixo inclinado e o anel (se houver) em volta. */
+function RingPreview({ spec, tilt }: { spec: RingSpec | null; tilt: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = ref.current
@@ -290,12 +327,29 @@ function RingPreview({ spec }: { spec: RingSpec }) {
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
-    const r = Math.min(52, (w * 0.46) / spec.outer)
+    const reach = Math.max(1.25, spec?.outer ?? 0)
+    const r = Math.min(52, (Math.min(w, h * 1.6) * 0.46) / reach)
     const cx = w / 2
     const cy = h / 2
     const sinLat = Math.sin(0.38)
-    const stops = ringStops(spec)
-    drawRingHalf(ctx, cx, cy, r, spec, sinLat, 'back', stops)
+    const roll = (tilt * Math.PI) / 180
+    const stops = spec ? ringStops(spec) : null
+    // O eixo: um fio que atravessa o planeta de polo a polo.
+    const axis = (length: number) => {
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(roll)
+      ctx.strokeStyle = 'rgba(232, 185, 100, 0.85)'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      ctx.moveTo(0, -length)
+      ctx.lineTo(0, length)
+      ctx.stroke()
+      ctx.restore()
+    }
+    axis(r * 1.3)
+    if (spec && stops) drawRingHalf(ctx, cx, cy, r, spec, sinLat, 'back', stops, roll)
     const body = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r)
     body.addColorStop(0, '#c9b48e')
     body.addColorStop(1, '#5d4b36')
@@ -303,7 +357,18 @@ function RingPreview({ spec }: { spec: RingSpec }) {
     ctx.beginPath()
     ctx.arc(cx, cy, r, 0, Math.PI * 2)
     ctx.fill()
-    drawRingHalf(ctx, cx, cy, r, spec, sinLat, 'front', stops)
-  }, [spec])
+    if (spec && stops) drawRingHalf(ctx, cx, cy, r, spec, sinLat, 'front', stops, roll)
+    // As pontas do eixo, por cima, para ler a inclinacao.
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(roll)
+    ctx.fillStyle = '#e8b964'
+    for (const y of [-r * 1.3, r * 1.3]) {
+      ctx.beginPath()
+      ctx.arc(0, y, 2.5, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.restore()
+  }, [spec, tilt])
   return <canvas ref={ref} className="ring-preview" style={{ width: 260, height: 150 }} />
 }

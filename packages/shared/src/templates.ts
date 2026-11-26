@@ -14,6 +14,8 @@ export interface Template {
   fill: number
   /** Aneis de saida (editaveis depois). */
   rings?: RingSpec
+  /** Inclinacao do eixo de saida, em graus. */
+  axialTilt?: number
 }
 
 export const TEMPLATES: Record<TemplateId, Template> = {
@@ -68,6 +70,7 @@ export const TEMPLATES: Record<TemplateId, Template> = {
     hint: 'So gas, em faixas, com aneis: pinte as tempestades por cima',
     fill: 0,
     rings: { inner: 1.25, outer: 2.3, color: '#d8c49a', color2: '#9c8466', opacity: 0.8, seed: 7 },
+    axialTilt: 27,
     materials: [
       {
         code: 0,

@@ -128,6 +128,7 @@ export const patchBodySchema = z.object({
   radiusKm: radius.optional(),
   parentId: z.uuid().nullable().optional(),
   rings: ringSchema.nullable().optional(),
+  axialTilt: z.number().min(0, 'Inclinacao de 0 a 180 graus').max(180, 'Inclinacao de 0 a 180 graus').optional(),
 })
 
 export type PatchBodyInput = z.infer<typeof patchBodySchema>

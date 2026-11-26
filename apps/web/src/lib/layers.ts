@@ -666,6 +666,8 @@ export type ViewMode = 'politica' | 'biomas' | 'mista'
 export interface ViewOptions {
   mode: ViewMode
   showBorders: boolean
+  /** Escurece a costa (troca de fase). Padrao: sim. O globo desliga. */
+  coastLine?: boolean
 }
 
 export function hexToRgb(hex: string): [number, number, number] {
@@ -794,10 +796,11 @@ function composeInto(
       // do terreno, entao acompanha qualquer edicao.
       const bit = phaseBit[code]
       const beira =
-        (px > 0 && phaseBit[terrain[i - 1]] !== bit) ||
+        view.coastLine !== false &&
+        ((px > 0 && phaseBit[terrain[i - 1]] !== bit) ||
         (px < width - 1 && phaseBit[terrain[i + 1]] !== bit) ||
         (py > 0 && phaseBit[terrain[i - width]] !== bit) ||
-        (py < height - 1 && phaseBit[terrain[i + width]] !== bit)
+        (py < height - 1 && phaseBit[terrain[i + width]] !== bit))
       if (beira) {
         r *= 0.42
         g *= 0.42

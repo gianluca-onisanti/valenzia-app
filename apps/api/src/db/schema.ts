@@ -54,6 +54,8 @@ export const bodies = pgTable(
     origin: bodyOrigin('origin').notNull(),
     /** Aneis no plano do equador; nulo = sem aneis. */
     rings: jsonb('rings').$type<RingSpec | null>(),
+    /** Inclinacao do eixo, em graus. */
+    axialTilt: doublePrecision('axial_tilt').notNull().default(0),
     thumbnail: bytea('thumbnail'),
     revision: integer('revision').notNull().default(0),
     ...timestamps,

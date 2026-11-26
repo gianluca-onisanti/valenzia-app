@@ -1,0 +1,1 @@
+ALTER TABLE "bodies" ADD COLUMN "axial_tilt" double precision DEFAULT 0 NOT NULL;

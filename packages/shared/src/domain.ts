@@ -187,6 +187,11 @@ export interface BodyMeta {
   origin: BodyOrigin
   parentId: string | null
   rings: RingSpec | null
+  /**
+   * Inclinacao do eixo, em graus (0 a 180): Terra 23, Saturno 27, Urano 98.
+   * No globo, tomba a esfera, os aneis e o plano das orbitas das luas.
+   */
+  axialTilt: number
   /** Sobe a cada Salvar; o editor manda a que leu para detectar conflito. */
   revision: number
   createdAt: string

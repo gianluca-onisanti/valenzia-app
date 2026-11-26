@@ -268,6 +268,12 @@ describe('API de corpos', () => {
     const inside = await call('/api/bodies/' + gas.body.id, json('PATCH', { rings: { ...rings, inner: 0.5 } }))
     expect(inside.status).toBe(400)
 
+    expect(gas.body.axialTilt).toBe(27)
+    const tilted = await call<BodyDocument>('/api/bodies/' + gas.body.id, json('PATCH', { axialTilt: 98 }))
+    expect(tilted.body.axialTilt).toBe(98)
+    const tooMuch = await call('/api/bodies/' + gas.body.id, json('PATCH', { axialTilt: 200 }))
+    expect(tooMuch.status).toBe(400)
+
     const off = await call<BodyDocument>('/api/bodies/' + gas.body.id, json('PATCH', { rings: null }))
     expect(off.body.rings).toBeNull()
     const tree = await call<BodyTreeNode[]>('/api/bodies')

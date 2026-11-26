@@ -26,6 +26,7 @@ import {
   materialPalette,
   measurePhases,
   measureSlots,
+  paintComposite,
   reconcileTerrain,
   rectOf,
   replaceValue,
@@ -145,7 +146,6 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
   const [brushSize, setBrushSize] = useState(12)
   /** O globo e so visualizacao: o editor continua montado por tras. */
   const [globe, setGlobe] = useState(false)
-  const [globeTexture, setGlobeTexture] = useState<HTMLCanvasElement | null>(null)
   /** Apagar e alvo de pintura: o laco e o balde e que dizem onde. */
   const [erasing, setErasing] = useState(false)
   const [activePaint, setActivePaint] = useState<{ layer: PaintLayer; slot: number }>({
@@ -299,12 +299,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
   const openGlobeOnArrival = (location.state as { globe?: boolean } | null)?.globe === true
   useEffect(() => {
     if (loading || !openGlobeOnArrival) return
-    const timer = setTimeout(() => {
-      const texture = mapRef.current?.texture()
-      if (!texture) return
-      setGlobeTexture(texture)
-      setGlobe(true)
-    }, 50)
+    const timer = setTimeout(() => setGlobe(true), 50)
     return () => clearTimeout(timer)
   }, [loading, openGlobeOnArrival])
 
@@ -866,6 +861,32 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
     return { ...materialPalette(world.materials), territory, biome }
   }, [world.territories, world.biomes, world.materials])
 
+  /**
+   * A textura do globo, montada na hora com a mesma receita do mapa. Com
+   * `borders` falso, sai sem fronteiras nem linha de costa: na esfera, esses
+   * tracos de 1px viram serrilhado.
+   */
+  const makeGlobeTexture = useCallback(
+    (borders: boolean) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = base.width
+      canvas.height = base.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      paintComposite(
+        ctx,
+        base,
+        layers.territory,
+        layers.biome,
+        palette,
+        { mode: view.mode, showBorders: borders, coastLine: borders },
+        rectOf(0, 0, base.width - 1, base.height - 1),
+      )
+      return canvas
+    },
+    [base, layers, palette, view.mode],
+  )
+
   /** Onde a tinta pode pegar, pelo que esta armado. */
   const stencil: Stencil = useMemo(() => {
     if (activePaint.layer === 'terrain') return null
@@ -915,11 +936,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
         erasing={erasing}
         onToggleErasing={() => setErasing((v) => !v)}
         globe={globe}
-        onToggleGlobe={() => {
-          // A textura do globo e a mesma que o mapa ja tem pronta na tela.
-          if (!globe) setGlobeTexture(mapRef.current?.texture() ?? null)
-          setGlobe((v) => !v)
-        }}
+        onToggleGlobe={() => setGlobe((v) => !v)}
         dirty={dirty}
         status={status}
         busy={busy}
@@ -1005,7 +1022,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
             }}
             base={base}
             world={world}
-            source={globeTexture}
+            makeTexture={makeGlobeTexture}
             version={view.mode + view.showBorders + paletteVersion + ':' + layerVersion}
             pois={showPois ? world.pois.filter((p) => visiblePoiTypes.has(p.type)) : []}
             onSelectPoi={(id) => {

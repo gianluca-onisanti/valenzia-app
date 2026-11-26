@@ -67,7 +67,7 @@ que já tem luas não pode virar lua.
 
 | Tabela | O que guarda |
 | --- | --- |
-| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), miniatura, `revision` |
+| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), inclinação do eixo (`axial_tilt`, graus), miniatura, `revision` |
 | `materials` | os materiais de terreno do corpo: nome, fase (`solid`, `liquid` ou `gas`), cor, textura |
 | `layers` | as três camadas raster, em PNG (`terrain`, `territory`, `biome`) |
 | `territories` | países, mares e zonas: nome, cor, ficha (governo, população...) |
@@ -201,15 +201,32 @@ exportação em PNG e SVG.
 ### Globo e sistema
 
 O botão de globo mostra o corpo como esfera, e em volta dele o **sistema**:
-num planeta, as luas dele; numa lua, o planeta-mãe e as luas irmãs. Os
-vizinhos orbitam no plano do equador e ficam sempre ao fundo: nunca tampam o
-corpo em foco. Clicar num vizinho abre o globo dele, e assim dá para passear
-pelo sistema. O botão **Sistema** esconde os vizinhos.
+num planeta, as luas dele; numa lua, o planeta-mãe e as luas irmãs. As luas
+orbitam no plano do equador do planeta, e os vizinhos ficam sempre ao fundo:
+nunca tampam o corpo em foco. Clicar num vizinho abre o globo dele, e assim
+dá para passear pelo sistema. O botão **Sistema** esconde os vizinhos, e
+**Fronteiras** liga as fronteiras e a costa na esfera (desligadas por padrão,
+porque traços de 1 pixel serrilham na esfera).
+
+O sistema tem **uma disposição só**, medida em raios do planeta. Trocar de
+foco só muda o centro da câmera e o zoom. Por isso, se a lua aparece com um
+quinto do tamanho do planeta na vista do planeta, na vista da lua o planeta
+aparece cinco vezes maior que ela, e na mesma proporção de distância: grande
+e no fundo do céu. A roda do mouse afasta a câmera para ver o sistema
+inteiro. Vista de uma lua, a órbita anda mais devagar.
 
 A escala real não cabe na tela (a Lua vista da Terra ficaria a 60 raios de
 distância). Por isso as distâncias são artísticas e os tamanhos aparentes
 são comprimidos: um corpo maior continua maior, e um satélite minúsculo ainda
 aparece como um ponto. A textura de cada vizinho é a miniatura do atlas.
+
+### Inclinação do eixo
+
+Na engrenagem do corpo, **Inclinação do eixo** vai de 0° a 180° (há atalhos
+para Terra, Saturno e Urano). No globo, a esfera tomba, o giro passa a ser
+em volta do eixo inclinado, os anéis tombam junto com o equador, e as órbitas
+das luas seguem a inclinação do planeta. O arrasto é lido no referencial do
+corpo, para a superfície continuar seguindo o mouse.
 
 ### Anéis
 

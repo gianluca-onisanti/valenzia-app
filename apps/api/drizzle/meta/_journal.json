@@ -15,6 +15,13 @@
       "when": 1795654377608,
       "tag": "0001_rings",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795655399602,
+      "tag": "0002_axial_tilt",
+      "breakpoints": true
     }
   ]
 }

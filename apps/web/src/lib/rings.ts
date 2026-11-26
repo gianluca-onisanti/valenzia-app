@@ -36,7 +36,7 @@ export interface RingStop {
   color: string
 }
 
-const STOPS = 56
+const STOPS = 120
 
 /** As paradas do degrade radial: cor, brilho e transparencia de cada faixa. */
 export function ringStops(spec: RingSpec): RingStop[] {
@@ -79,8 +79,19 @@ export function ringStops(spec: RingSpec): RingStop[] {
 }
 
 /**
- * Desenha metade do anel de um corpo com centro (cx, cy) e raio r na tela.
- * `sinLat` e o seno da latitude de onde se olha.
+ * Desenha uma das duas passadas do anel de um corpo com centro (cx, cy) e
+ * raio r na tela. `sinLat` e o seno da latitude de onde se olha.
+ *
+ * - 'back' (antes do planeta): o anel inteiro. O planeta, desenhado por cima,
+ *   esconde a parte de tras.
+ * - 'front' (depois do planeta): so o pedaco da metade da frente que cai em
+ *   cima do disco do planeta. Fora do disco ele ja foi desenhado na primeira
+ *   passada.
+ *
+ * Cortar as duas metades exatamente na linha do centro deixava uma costura
+ * visivel ali (as bordas suavizadas dos dois cortes se somam). Assim, o
+ * unico corte cai dentro do disco, onde o anel nunca encosta na linha do
+ * centro (ele comeca fora do planeta).
  */
 export function drawRingHalf(
   ctx: CanvasRenderingContext2D,
@@ -91,6 +102,8 @@ export function drawRingHalf(
   sinLat: number,
   half: 'back' | 'front',
   stops: RingStop[] = ringStops(spec),
+  /** Inclinacao do eixo, em radianos: o anel tomba junto com o equador. */
+  roll = 0,
 ): void {
   const outer = spec.outer * r
   const inner = spec.inner * r
@@ -100,11 +113,17 @@ export function drawRingHalf(
   const lowerHalf = (half === 'front') === sinLat >= 0
 
   ctx.save()
-  ctx.beginPath()
-  if (lowerHalf) ctx.rect(cx - outer - 2, cy, outer * 2 + 4, outer + 2)
-  else ctx.rect(cx - outer - 2, cy - outer - 2, outer * 2 + 4, outer + 2)
-  ctx.clip()
   ctx.translate(cx, cy)
+  ctx.rotate(roll)
+  if (half === 'front') {
+    ctx.beginPath()
+    if (lowerHalf) ctx.rect(-outer - 2, 0, outer * 2 + 4, outer + 2)
+    else ctx.rect(-outer - 2, -outer - 2, outer * 2 + 4, outer + 2)
+    ctx.clip()
+    ctx.beginPath()
+    ctx.arc(0, 0, r, 0, Math.PI * 2)
+    ctx.clip()
+  }
   ctx.scale(1, squash)
   const gradient = ctx.createRadialGradient(0, 0, inner, 0, 0, outer)
   for (const s of stops) gradient.addColorStop(s.offset, s.color)
