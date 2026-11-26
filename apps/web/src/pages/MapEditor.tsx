@@ -12,7 +12,8 @@ import { Sidebar } from '../components/Sidebar'
 import { Toolbar } from '../components/Toolbar'
 import { ToolDock, BRUSH_MAX, BRUSH_MIN } from '../components/ToolDock'
 import { IsolatedView } from '../components/IsolatedView'
-import { GlobeView } from '../components/GlobeView'
+import { GlobeView, type GlobeLines } from '../components/GlobeView'
+import { borderStroke, drawScene } from '../lib/vectorPaint'
 import { BodySettingsDialog } from '../components/BodySettingsDialog'
 import { useBody, type LoadedBody } from '../hooks/useBody'
 import { BIOMES, COUNTRY_COLORS, SEA_COLORS, ZONE_COLORS } from '../lib/biomes'
@@ -30,6 +31,7 @@ import {
   reconcileTerrain,
   rectOf,
   replaceValue,
+  terrainSpecks,
   syncPhases,
   unionRect,
   type Palette,
@@ -67,6 +69,8 @@ import type {
 
 /** Teto de memoria do desfazer; um balde grande sozinho ja pesa megabytes. */
 const HISTORY_BUDGET = 120 * 1024 * 1024
+/** Teto da textura do globo, em pixels (~64 MB de RGBA). */
+const GLOBE_TEXTURE_PIXELS = 4096 * 2048 * 2
 
 export function MapEditorPage() {
   const { bodyId = '' } = useParams()
@@ -652,6 +656,30 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
     [base, world.materials, world.territories, reconcileAll, pushHistory, updateWorld, scheduleStats],
   )
 
+  /** Conta as manchas pequenas do terreno, sem mexer em nada. */
+  const countSpecks = useCallback(
+    (maxSize: number) => terrainSpecks(base.terrain, base.width, base.height, maxSize),
+    [base],
+  )
+
+  /** Some com as manchas pequenas: cada uma vira o material que a cerca. */
+  const cleanSpecks = useCallback(
+    (maxSize: number) => {
+      const journal = new Journal()
+      const report = terrainSpecks(base.terrain, base.width, base.height, maxSize, { journal })
+      if (!report.rect) return report
+      // A ilhota que vira mar leva junto a tinta de pais que estava nela.
+      const parts = [{ journal, layer: 'terrain' as PaintLayer }, ...reconcileAll(world.territories)]
+      pushHistory(parts)
+      setDirty(true)
+      setTerrainVersion((v) => v + 1)
+      mapRef.current?.repaint(null, true)
+      scheduleStats()
+      return report
+    },
+    [base, world.territories, reconcileAll, pushHistory, scheduleStats],
+  )
+
   /* --------------------------------------------------------------- pontos */
   const placePoi = useCallback(
     (x: number, y: number) => {
@@ -866,26 +894,65 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
    * `borders` falso, sai sem fronteiras nem linha de costa: na esfera, esses
    * tracos de 1px viram serrilhado.
    */
-  const makeGlobeTexture = useCallback(
-    (borders: boolean) => {
-      const canvas = document.createElement('canvas')
-      canvas.width = base.width
-      canvas.height = base.height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return null
-      paintComposite(
-        ctx,
-        base,
-        layers.territory,
-        layers.biome,
-        palette,
-        { mode: view.mode, showBorders: borders, coastLine: borders },
-        rectOf(0, 0, base.width - 1, base.height - 1),
-      )
+  /**
+   * A pele do globo: so cores (chao, paises, biomas), sem linha nenhuma --
+   * costa e fronteiras vao por cima em vetor (ver makeGlobeLines). Sai do
+   * desenho vetorial, ampliado ate ~16 Mpx, para a borda entre as cores ficar
+   * lisa mesmo de perto.
+   */
+  const makeGlobeTexture = useCallback(() => {
+    const k = Math.min(2, Math.sqrt(GLOBE_TEXTURE_PIXELS / (base.width * base.height)))
+    const scale = Math.max(1, k)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(base.width * scale)
+    canvas.height = Math.round(base.height * scale)
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return null
+    const scene = mapRef.current?.scene()
+    const flat = { mode: view.mode, showBorders: false, coastLine: false }
+    if (scene) {
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.scale(scale, scale)
+      drawScene(ctx, scene, { base, materials: world.materials, view: flat, scale, selection: null })
       return canvas
-    },
-    [base, layers, palette, view.mode],
-  )
+    }
+    // Contornos ainda sendo tracados: o raster serve por enquanto.
+    const raw = document.createElement('canvas')
+    raw.width = base.width
+    raw.height = base.height
+    const rawCtx = raw.getContext('2d')
+    if (!rawCtx) return null
+    paintComposite(
+      rawCtx,
+      base,
+      layers.territory,
+      layers.biome,
+      palette,
+      flat,
+      rectOf(0, 0, base.width - 1, base.height - 1),
+    )
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(raw, 0, 0, canvas.width, canvas.height)
+    return canvas
+  }, [base, layers, palette, view.mode, world.materials])
+
+  /** Costa e fronteiras em vetor, para o globo projetar a cada quadro. */
+  const makeGlobeLines = useCallback((): GlobeLines | null => {
+    const scene = mapRef.current?.scene()
+    if (!scene) return null
+    return {
+      coast: scene.solid?.loops ?? [],
+      borders:
+        view.mode === 'biomas'
+          ? []
+          : scene.territories.map(({ entity, shape }) => ({
+              loops: shape.loops,
+              color: borderStroke(entity),
+            })),
+    }
+  }, [view.mode])
 
   /** Onde a tinta pode pegar, pelo que esta armado. */
   const stencil: Stencil = useMemo(() => {
@@ -1023,6 +1090,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
             base={base}
             world={world}
             makeTexture={makeGlobeTexture}
+            makeLines={makeGlobeLines}
             version={view.mode + view.showBorders + paletteVersion + ':' + layerVersion}
             pois={showPois ? world.pois.filter((p) => visiblePoiTypes.has(p.type)) : []}
             onSelectPoi={(id) => {
@@ -1043,6 +1111,8 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
           poiOwners={poiOwners}
           phaseTotals={phaseTotals}
           onSelect={setSelection}
+          onCountSpecks={countSpecks}
+          onCleanSpecks={cleanSpecks}
           onPaintWith={(layer, slot) => {
             setActivePaint({ layer, slot })
             if (layer === 'terrain') {

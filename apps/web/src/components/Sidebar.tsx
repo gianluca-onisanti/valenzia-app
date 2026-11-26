@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   PATTERN_IDS,
   PATTERN_LABELS,
@@ -20,7 +20,7 @@ import type {
   World,
 } from '../types'
 import type { SlotStats } from './MapView'
-import type { PhaseTotals } from '../lib/layers'
+import type { PhaseTotals, SpeckReport } from '../lib/layers'
 import { BIOMES, BIOME_TYPES } from '../lib/biomes'
 import { POI_TYPES, POI_TYPE_LIST } from '../lib/poiTypes'
 
@@ -80,6 +80,9 @@ interface SidebarProps {
   onCreateMaterial: (phase: Phase) => void
   onUpdateMaterial: (code: number, patch: Partial<Material>) => void
   onDeleteMaterial: (code: number, replacement: number) => void
+  /** Manchas do terreno com ate `maxSize` pixels: contar e limpar. */
+  onCountSpecks: (maxSize: number) => SpeckReport
+  onCleanSpecks: (maxSize: number) => SpeckReport
   placingPoi: PoiType | null
   onPlacingPoi: (type: PoiType | null) => void
   visiblePoiTypes: Set<PoiType>
@@ -351,6 +354,73 @@ function TerrainTab(props: SidebarProps) {
           </button>
         ))}
       </div>
+
+      <SpeckCleaner {...props} />
+    </>
+  )
+}
+
+/** Tamanhos oferecidos para a limpeza, em pixels. */
+const SPECK_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+
+/**
+ * Limpeza de manchas: ilhotas e lagoinhas que sobraram da imagem de origem e
+ * viram pontinhos no mapa. Mostra quantas cabem no limite antes de apagar.
+ */
+function SpeckCleaner(props: SidebarProps) {
+  const [index, setIndex] = useState(3)
+  const [report, setReport] = useState<SpeckReport | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+  const maxSize = SPECK_SIZES[index]
+  const { onCountSpecks, materialStats } = props
+
+  // Recontar depois que o slider para, e quando o terreno muda.
+  useEffect(() => {
+    const id = window.setTimeout(() => setReport(onCountSpecks(maxSize)), 150)
+    return () => window.clearTimeout(id)
+  }, [maxSize, onCountSpecks, materialStats])
+
+  return (
+    <>
+      <h3 className="section-title">Limpar manchas</h3>
+      <p className="muted small hint">
+        Ilhotas, lagoinhas e pingos de material menores que o limite viram o
+        material em volta. Da para desfazer.
+      </p>
+      <label className="form-field">
+        <span>Ate {maxSize} px</span>
+        <input
+          type="range"
+          min={0}
+          max={SPECK_SIZES.length - 1}
+          step={1}
+          value={index}
+          onChange={(e) => {
+            setIndex(Number(e.target.value))
+            setDone(null)
+          }}
+        />
+      </label>
+      <p className="muted small">
+        {report === null
+          ? 'Contando...'
+          : report.count === 0
+            ? 'Nenhuma mancha desse tamanho.'
+            : report.count + (report.count === 1 ? ' mancha' : ' manchas') +
+              ' · ' + report.pixels.toLocaleString('pt-BR') + ' px'}
+      </p>
+      <button
+        className="button"
+        disabled={!report || report.count === 0}
+        onClick={() => {
+          const r = props.onCleanSpecks(maxSize)
+          setDone(r.count + (r.count === 1 ? ' mancha limpa.' : ' manchas limpas.'))
+          setReport(onCountSpecks(maxSize))
+        }}
+      >
+        Limpar
+      </button>
+      {done && <p className="muted small">{done}</p>}
     </>
   )
 }

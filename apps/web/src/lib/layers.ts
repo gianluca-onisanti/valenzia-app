@@ -1081,3 +1081,125 @@ export function cleanLayer(
   }
   return report
 }
+
+/* ---------------------------------------------------- manchas do terreno */
+
+export interface SpeckReport {
+  /** Quantas manchas (ilhotas, lagoinhas...) cabem no limite. */
+  count: number
+  /** Quantos pixels elas somam. */
+  pixels: number
+}
+
+/**
+ * Manchas pequenas do terreno: pedacos continuos (4 vizinhos) de um mesmo
+ * material com ate `maxSize` pixels. Sobram da extracao de uma imagem -- uma
+ * ilhota de 40 px ou um lago do mesmo tamanho -- e, com a costa ligada, viram
+ * pontinhos escuros espalhados pelo mapa.
+ *
+ * Com `fix`, cada mancha vira o material que mais a cerca (anotado no
+ * `journal`, para desfazer). As manchas sao achadas todas antes de qualquer
+ * troca, entao o resultado nao depende da ordem da varredura.
+ */
+export function terrainSpecks(
+  terrain: Uint16Array,
+  width: number,
+  height: number,
+  maxSize: number,
+  fix?: { journal: Journal },
+): SpeckReport & { rect: Rect | null } {
+  const total = width * height
+  const seen = new Uint8Array(total)
+  const queue = new Int32Array(total)
+  const found: { start: number; end: number }[] = []
+  // As manchas pequenas ficam guardadas no comeco de `queue`, uma depois da
+  // outra; as grandes sao varridas no resto e descartadas.
+  let kept = 0
+  let pixels = 0
+  for (let start = 0; start < total; start++) {
+    if (seen[start]) continue
+    const code = terrain[start]
+    let head = kept
+    let tail = kept
+    queue[tail++] = start
+    seen[start] = 1
+    while (head < tail) {
+      const p = queue[head++]
+      const px = p % width
+      if (px > 0 && !seen[p - 1] && terrain[p - 1] === code) {
+        seen[p - 1] = 1
+        queue[tail++] = p - 1
+      }
+      if (px < width - 1 && !seen[p + 1] && terrain[p + 1] === code) {
+        seen[p + 1] = 1
+        queue[tail++] = p + 1
+      }
+      if (p >= width && !seen[p - width] && terrain[p - width] === code) {
+        seen[p - width] = 1
+        queue[tail++] = p - width
+      }
+      if (p + width < total && !seen[p + width] && terrain[p + width] === code) {
+        seen[p + width] = 1
+        queue[tail++] = p + width
+      }
+    }
+    const size = tail - kept
+    if (size <= maxSize && size < total) {
+      found.push({ start: kept, end: tail })
+      kept = tail
+      pixels += size
+    }
+  }
+
+  let rect: Rect | null = null
+  if (fix) {
+    const replacement = new Int32Array(found.length).fill(-1)
+    const tally = new Map<number, number>()
+    found.forEach(({ start, end }, k) => {
+      const code = terrain[queue[start]]
+      tally.clear()
+      for (let q = start; q < end; q++) {
+        const p = queue[q]
+        const px = p % width
+        const around = [
+          px > 0 ? p - 1 : -1,
+          px < width - 1 ? p + 1 : -1,
+          p >= width ? p - width : -1,
+          p + width < total ? p + width : -1,
+        ]
+        for (const n of around) {
+          if (n < 0 || terrain[n] === code) continue
+          tally.set(terrain[n], (tally.get(terrain[n]) ?? 0) + 1)
+        }
+      }
+      let best = -1
+      let most = 0
+      for (const [c, n] of tally) {
+        if (n > most) {
+          most = n
+          best = c
+        }
+      }
+      replacement[k] = best
+    })
+    found.forEach(({ start, end }, k) => {
+      const to = replacement[k]
+      if (to < 0) return
+      for (let q = start; q < end; q++) {
+        const p = queue[q]
+        fix.journal.record(p, terrain[p])
+        terrain[p] = to
+        const x = p % width
+        const y = (p - x) / width
+        if (!rect) rect = rectOf(x, y, x, y)
+        else {
+          if (x < rect.x0) rect.x0 = x
+          if (x > rect.x1) rect.x1 = x
+          if (y < rect.y0) rect.y0 = y
+          if (y > rect.y1) rect.y1 = y
+        }
+      }
+    })
+  }
+  return { count: found.length, pixels, rect }
+}

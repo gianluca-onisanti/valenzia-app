@@ -11,7 +11,9 @@ import {
   replaceValue,
   stampDisc,
   syncPhases,
+  terrainSpecks,
 } from '../src/lib/layers'
+import { toSphere } from '../src/lib/globeLines'
 
 /**
  * Mapa de 8x8: metade esquerda mar (codigo 0, liquido), metade direita terra
@@ -113,5 +115,61 @@ describe('materiais', () => {
     const totals = measurePhases(base, rows)
     expect(totals.pixels).toEqual({ liquid: 32, solid: 24, gas: 8 })
     expect(totals.km2.gas).toBe(80)
+  })
+})
+
+describe('terrainSpecks', () => {
+  // Mar (0) com um continente (1) de 6x6, uma ilhota de 2 px e, dentro do
+  // continente, um lago de 1 px.
+  const W = 12
+  const H = 10
+  const make = () => {
+    const t = new Uint16Array(W * H)
+    for (let y = 2; y < 8; y++) for (let x = 2; x < 8; x++) t[y * W + x] = 1
+    t[4 * W + 4] = 0
+    t[1 * W + 10] = 1
+    t[2 * W + 10] = 1
+    return t
+  }
+
+  it('conta sem mexer', () => {
+    const t = make()
+    const before = t.slice()
+    const report = terrainSpecks(t, W, H, 4)
+    expect(report).toMatchObject({ count: 2, pixels: 3 })
+    expect(t).toEqual(before)
+  })
+
+  it('troca cada mancha pelo material em volta, e o journal desfaz', () => {
+    const t = make()
+    const before = t.slice()
+    const journal = new Journal()
+    const report = terrainSpecks(t, W, H, 4, { journal })
+    expect(report.count).toBe(2)
+    expect(t[4 * W + 4]).toBe(1)
+    expect(t[1 * W + 10]).toBe(0)
+    expect(t[2 * W + 10]).toBe(0)
+    expect(terrainSpecks(t, W, H, 4).count).toBe(0)
+    journal.revert(t)
+    expect(t).toEqual(before)
+  })
+
+  it('nao apaga o que e maior que o limite', () => {
+    const t = make()
+    expect(terrainSpecks(t, W, H, 1).count).toBe(1)
+  })
+})
+
+describe('toSphere', () => {
+  it('descarta o trecho que corre pela moldura do mapa', () => {
+    // Um quadrado encostado na borda esquerda: o lado x=0 e corte, nao costa.
+    const loop = Float32Array.from([0, 10, 5, 10, 5, 20, 0, 20])
+    const lines = toSphere([loop], 100, 50)
+    const points = lines.reduce((n, l) => n + l.length / 3, 0)
+    expect(lines.length).toBe(1)
+    expect(points).toBe(4)
+    for (const l of lines) for (let i = 0; i < l.length; i += 3) {
+      expect(Math.hypot(l[i], l[i + 1], l[i + 2])).toBeCloseTo(1, 5)
+    }
   })
 })

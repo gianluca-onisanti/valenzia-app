@@ -12,6 +12,9 @@ import {
   type Texture,
 } from '../lib/globe'
 import { drawRingHalf, ringStops, type RingStop } from '../lib/rings'
+import { strokeOnSphere, toSphere, type SpherePolyline } from '../lib/globeLines'
+import { coastAlpha } from '../lib/vectorPaint'
+import type { Loop } from '../lib/trace'
 import { api } from '../lib/api'
 import { POI_TYPES } from '../lib/poiTypes'
 
@@ -20,8 +23,10 @@ interface GlobeViewProps {
   body: BodyMeta
   base: MapBase
   world: World
-  /** Monta a textura do mapa, com ou sem fronteiras e costa. */
-  makeTexture: (borders: boolean) => HTMLCanvasElement | null
+  /** Monta a pele do globo: so as cores, sem linha nenhuma. */
+  makeTexture: () => HTMLCanvasElement | null
+  /** Costa e fronteiras em vetor (null enquanto o mapa ainda as traca). */
+  makeLines: () => GlobeLines | null
   /** Pontos a mostrar; vazio esconde todos. */
   pois: Poi[]
   onSelectPoi: (id: string) => void
@@ -32,12 +37,15 @@ interface GlobeViewProps {
   version: string
 }
 
-/**
- * Largura da textura lida. O globo tem no maximo uns 800px de diametro, e
- * 360 graus cabem nesse diametro: puxar os 4096 do mapa original so traria
- * tremulacao ao girar.
- */
-const TEX_WIDTH = 1536
+/** Os contornos do mapa plano que o globo risca por cima da pele. */
+export interface GlobeLines {
+  coast: Loop[]
+  borders: { loops: Loop[]; color: string }[]
+}
+
+/** Espessura das linhas, em pixels de tela: nao muda com o zoom. */
+const COAST_WIDTH = 1.4
+const BORDER_WIDTH = 1.2
 const MIN_R = 60
 const MAX_R = 1400
 /** Uma volta completa a cada ~40 segundos. */
@@ -291,21 +299,33 @@ export function GlobeView(props: GlobeViewProps) {
   const [texture, setTexture] = useState<Texture | null>(null)
   const { makeTexture } = props
   useEffect(() => {
-    const source = makeTexture(showBorders)
+    const source = makeTexture()
     if (!source) return
-    const h = Math.round((TEX_WIDTH * base.height) / base.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = TEX_WIDTH
-    canvas.height = h
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const ctx = source.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(source, 0, 0, TEX_WIDTH, h)
-    const image = ctx.getImageData(0, 0, TEX_WIDTH, h)
-    setTexture({ data: image.data, width: TEX_WIDTH, height: h })
+    const image = ctx.getImageData(0, 0, source.width, source.height)
+    setTexture({ data: image.data, width: source.width, height: source.height })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showBorders, props.version, base.width, base.height])
+  }, [props.version, base.width, base.height])
+
+  /** Costa e fronteiras ja na esfera, prontas para girar e projetar. */
+  const linesRef = useRef<{ coast: SpherePolyline[]; borders: { lines: SpherePolyline[]; color: string }[] } | null>(null)
+  const { makeLines } = props
+  useEffect(() => {
+    if (!showBorders) {
+      linesRef.current = null
+      return
+    }
+    const lines = makeLines()
+    linesRef.current = lines && {
+      coast: toSphere(lines.coast, base.width, base.height),
+      borders: lines.borders.map((b) => ({
+        lines: toSphere(b.loops, base.width, base.height),
+        color: b.color,
+      })),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBorders, props.version, makeLines, base.width, base.height])
 
   const sphere: Sphere = useMemo(
     () => ({ cx: size.w / 2, cy: size.h / 2, r: radius }),
@@ -362,8 +382,9 @@ export function GlobeView(props: GlobeViewProps) {
 
   /* ---------------------------------------------------- a cena, a cada quadro */
   const focusMember = system?.focus ?? null
-  const live = useRef({ rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll })
-  live.current = { rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll }
+  const mapWidth = base.width
+  const live = useRef({ rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll, mapWidth })
+  live.current = { rotation, sphere, visible, rings: body.rings, focusMember, focusRoll, systemRoll, mapWidth }
   const focusStops = useMemo(() => (body.rings ? ringStops(body.rings) : null), [body.rings])
   const focusStopsRef = useRef(focusStops)
   focusStopsRef.current = focusStops
@@ -498,6 +519,27 @@ export function GlobeView(props: GlobeViewProps) {
       ctx.imageSmoothingEnabled = true
       ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(focus, 0, 0, canvas.width, canvas.height)
+
+      // Costa e fronteiras, em vetor por cima da pele: finas em qualquer
+      // zoom. A costa esmaece de longe, como no mapa plano, medida em
+      // pixels de tela por pixel do mapa no equador.
+      const outlines = linesRef.current
+      if (outlines) {
+        ctx.save()
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+        ctx.lineWidth = BORDER_WIDTH * dpr
+        for (const b of outlines.borders) {
+          ctx.strokeStyle = b.color
+          strokeOnSphere(ctx, b.lines, rot, cx, cy, r, froll)
+        }
+        const density = (Math.PI * 2 * sp.r) / live.current.mapWidth
+        ctx.lineWidth = COAST_WIDTH * dpr
+        ctx.strokeStyle = 'rgba(15,15,15,' + coastAlpha(density).toFixed(3) + ')'
+        strokeOnSphere(ctx, outlines.coast, rot, cx, cy, r, froll)
+        ctx.restore()
+      }
+
       ring(ctx, cx, cy, r, rings, focusStopsRef.current, sinLat, 'front', froll)
 
       // Os nomes acompanham os corpos; quem esta escondido atras do foco some.

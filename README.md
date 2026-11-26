@@ -192,6 +192,12 @@ editor de nome, cor, fase e **textura**: liso, ruído, faixas (para gás) ou
 crateras, com segunda cor, intensidade e escala. Excluir um material pede
 outro para ficar com os pixels dele.
 
+No fim da aba, **Limpar manchas** some com ilhotas, lagoinhas e pingos de
+material menores que um limite (de 16 a 1024 px): cada mancha vira o
+material que mais a cerca. A contagem aparece antes de limpar, e dá para
+desfazer. Mapas extraídos de imagem costumam trazer dezenas delas, que na
+esfera, com a costa ligada, viram pontinhos escuros.
+
 ### Visões
 
 `1` Política, `2` Biomas, `3` Mista (o bioma em hachura sobre a cor do país).
@@ -205,8 +211,13 @@ num planeta, as luas dele; numa lua, o planeta-mãe e as luas irmãs. As luas
 orbitam no plano do equador do planeta, e os vizinhos ficam sempre ao fundo:
 nunca tampam o corpo em foco. Clicar num vizinho abre o globo dele, e assim
 dá para passear pelo sistema. O botão **Sistema** esconde os vizinhos, e
-**Fronteiras** liga as fronteiras e a costa na esfera (desligadas por padrão,
-porque traços de 1 pixel serrilham na esfera).
+**Fronteiras** liga as fronteiras e a costa na esfera (desligadas por padrão).
+
+A pele da esfera sai do desenho vetorial do mapa, ampliado até ~16 Mpx e
+lido com interpolação bilinear. Costa e fronteiras não são pintadas nela:
+os contornos vetoriais são levados para a esfera e riscados direto na tela a
+cada quadro, com espessura fixa. Por isso continuam finos e lisos em
+qualquer zoom.
 
 O sistema tem **uma disposição só**, medida em raios do planeta. Trocar de
 foco só muda o centro da câmera e o zoom. Por isso, se a lua aparece com um

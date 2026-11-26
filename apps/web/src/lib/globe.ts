@@ -43,7 +43,7 @@ export function clampLat(lat: number): number {
  * tela e `u` para cima. Fica tudo pre-calculado porque o laco de pixels nao
  * pode pagar seno e cosseno a cada passo.
  */
-function basis(rot: Rotation) {
+export function basis(rot: Rotation) {
   const cosLat = Math.cos(rot.lat)
   const sinLat = Math.sin(rot.lat)
   const cosLon = Math.cos(rot.lon)
@@ -120,11 +120,29 @@ export function renderGlobe(
       const lat = Math.asin(wy < -1 ? -1 : wy > 1 ? 1 : wy)
       const lon = Math.atan2(wz, wx)
 
-      let u = ((lon + Math.PI) / TAU) * tw
-      let v = ((Math.PI / 2 - lat) / Math.PI) * th
-      u = u < 0 ? 0 : u >= tw ? tw - 1 : u
-      v = v < 0 ? 0 : v >= th ? th - 1 : v
-      const t = ((v | 0) * tw + (u | 0)) * 4
+      // Bilinear: mistura os 4 texels em volta. Sem isso, de perto cada
+      // texel vira um quadrado e a borda entre duas cores, uma escada.
+      // Na horizontal a textura da a volta (o mapa fecha no antimeridiano).
+      let u = ((lon + Math.PI) / TAU) * tw - 0.5
+      let v = ((Math.PI / 2 - lat) / Math.PI) * th - 0.5
+      v = v < 0 ? 0 : v > th - 1 ? th - 1 : v
+      if (u < 0) u += tw
+      const u0 = u | 0
+      const v0 = v | 0
+      const fu = u - u0
+      const fv = v - v0
+      const u1 = u0 + 1 >= tw ? 0 : u0 + 1
+      const v1 = v0 + 1 >= th ? th - 1 : v0 + 1
+      const ua = u0 >= tw ? tw - 1 : u0
+      const t00 = (v0 * tw + ua) * 4
+      const t10 = (v0 * tw + u1) * 4
+      const t01 = (v1 * tw + ua) * 4
+      const t11 = (v1 * tw + u1) * 4
+      const w00 = (1 - fu) * (1 - fv)
+      const w10 = fu * (1 - fv)
+      const w01 = (1 - fu) * fv
+      const w11 = fu * fv
+      const d = tex.data
 
       // A luz vem de um lugar fixo da tela, nao do referencial do corpo.
       const lx = dx * invR
@@ -132,9 +150,11 @@ export function renderGlobe(
       const dot = lx * LIGHT[0] + ly * LIGHT[1] + nz * LIGHT[2]
       const shade = AMBIENT + DIFFUSE * (dot > 0 ? dot : 0)
 
-      const red = tex.data[t] * shade
-      const green = tex.data[t + 1] * shade
-      const blue = tex.data[t + 2] * shade
+      const red = (d[t00] * w00 + d[t10] * w10 + d[t01] * w01 + d[t11] * w11) * shade
+      const green =
+        (d[t00 + 1] * w00 + d[t10 + 1] * w10 + d[t01 + 1] * w01 + d[t11 + 1] * w11) * shade
+      const blue =
+        (d[t00 + 2] * w00 + d[t10 + 2] * w10 + d[t01 + 2] * w01 + d[t11 + 2] * w11) * shade
 
       for (let sy = 0; sy < step; sy++) {
         const yy = y + sy

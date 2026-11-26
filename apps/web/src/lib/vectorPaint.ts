@@ -20,6 +20,8 @@ export interface Shape {
   bounds: [number, number, number, number]
   /** O mesmo contorno em texto, para exportar SVG. */
   d: string
+  /** Os pontos do contorno, em coordenadas da imagem (o globo os projeta). */
+  loops: Loop[]
 }
 
 export function toShape(loops: Loop[]): Shape | null {
@@ -27,7 +29,7 @@ export function toShape(loops: Loop[]): Shape | null {
   if (!bounds) return null
   const d = pathData(loops)
   if (!d) return null
-  return { path: new Path2D(d), bounds, d }
+  return { path: new Path2D(d), bounds, d, loops }
 }
 
 type Rgb = [number, number, number]
@@ -48,6 +50,11 @@ const rgb = (c: Rgb, factor = 1) =>
  */
 export function territoryFill(entity: Territory): Rgb {
   return hexToRgb(entity.color)
+}
+
+/** O traco da fronteira de um pais: a cor dele, escurecida. */
+export function borderStroke(entity: Territory): string {
+  return rgb(territoryFill(entity), 0.45)
 }
 
 export interface SceneEntry<T> {
@@ -90,7 +97,7 @@ const COAST_ALPHA_NEAR = 0.88
 const COAST_ZOOM_FAR = 0.3
 const COAST_ZOOM_NEAR = 1.2
 
-function coastAlpha(scale: number): number {
+export function coastAlpha(scale: number): number {
   const t = (scale - COAST_ZOOM_FAR) / (COAST_ZOOM_NEAR - COAST_ZOOM_FAR)
   const clamped = t < 0 ? 0 : t > 1 ? 1 : t
   // Curva suave: a linha some devagar em vez de apagar de uma vez.
@@ -162,7 +169,7 @@ export function drawScene(
     ctx.lineCap = 'round'
     ctx.lineWidth = BORDER_WIDTH / scale
     for (const { entity, shape } of territories) {
-      ctx.strokeStyle = rgb(territoryFill(entity), 0.45)
+      ctx.strokeStyle = borderStroke(entity)
       ctx.stroke(shape.path)
     }
   }
@@ -190,7 +197,7 @@ export function drawScene(
   // Afiada em qualquer zoom, enquanto a imagem do chao viraria degrau.
   // O contorno pode passar por fora do mapa (ver traceCoast): o recorte o
   // esconde ali, e a moldura nunca ganha linha de costa.
-  if (scene.solid && only === undefined) {
+  if (scene.solid && only === undefined && view.coastLine !== false) {
     ctx.save()
     ctx.beginPath()
     ctx.rect(0, 0, options.base.width, options.base.height)

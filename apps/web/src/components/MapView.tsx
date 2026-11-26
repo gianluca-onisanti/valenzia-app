@@ -66,6 +66,11 @@ export interface MapViewHandle {
   texture(): HTMLCanvasElement | null
   /** So o chao, com texturas, em tamanho real. */
   ground(): HTMLCanvasElement | null
+  /**
+   * Os contornos vetoriais prontos (costa, paises, biomas) e o chao, ou null
+   * enquanto ainda estao sendo tracados.
+   */
+  scene(): Scene | null
 }
 
 interface MapViewProps {
@@ -550,6 +555,11 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       repaint,
       texture: () => compositeRef.current?.canvas ?? null,
       ground: () => groundRef.current?.canvas ?? null,
+      scene: () => {
+        const ground = groundRef.current
+        if (!scene || !ground || !solidReady || staleRef.current) return null
+        return { ...scene, terrain: ground.canvas }
+      },
       focusOn: (tx: number, ty: number, scale?: number) => {
         if (animation.current) cancelAnimationFrame(animation.current)
         const targetScale = scale ?? Math.max(viewport.scale, fitScale * 3)
@@ -573,7 +583,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         animation.current = requestAnimationFrame(step)
       },
     }),
-    [fit, zoomAt, repaint, size, viewport, fitScale],
+    [fit, zoomAt, repaint, size, viewport, fitScale, scene, solidReady],
   )
 
   useEffect(() => {
