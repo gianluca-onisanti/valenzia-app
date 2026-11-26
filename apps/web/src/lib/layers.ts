@@ -1,6 +1,11 @@
-import { PHASE_BIT, type Material } from '@valenzia/shared'
+import {
+  PHASE_BIT,
+  applyTexture,
+  compileTexture,
+  type CompiledTexture,
+  type Material,
+} from '@valenzia/shared'
 import type { Rect } from '../types'
-import { applyTexture, compileTexture, type CompiledTexture } from './texture'
 
 /**
  * O gabarito do mundo: dimensoes e a camada de terreno.

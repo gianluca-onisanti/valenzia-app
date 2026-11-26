@@ -246,6 +246,34 @@ describe('API de corpos', () => {
     expect(created.body).toMatchObject({ width: w, height: h, origin: 'image', radiusKm: 3000 })
   })
 
+  it('grava e valida aneis', async (ctx) => {
+    if (!available) return ctx.skip()
+    // O gigante gasoso ja nasce com aneis.
+    const gas = await call<BodyDocument>(
+      '/api/bodies',
+      json('POST', { name: 'Anelado', radiusKm: 58000, width: 256, height: 128, template: 'gasoso' }),
+    )
+    expect(gas.body.rings).toMatchObject({ inner: 1.25, outer: 2.3 })
+
+    const rings = { inner: 1.4, outer: 3, color: '#aabbcc', opacity: 0.6, seed: 42 }
+    const ok = await call<BodyDocument>('/api/bodies/' + gas.body.id, json('PATCH', { rings }))
+    expect(ok.status).toBe(200)
+    expect(ok.body.rings).toEqual(rings)
+
+    const inverted = await call<{ error: string }>(
+      '/api/bodies/' + gas.body.id,
+      json('PATCH', { rings: { ...rings, inner: 3, outer: 2 } }),
+    )
+    expect(inverted.status).toBe(400)
+    const inside = await call('/api/bodies/' + gas.body.id, json('PATCH', { rings: { ...rings, inner: 0.5 } }))
+    expect(inside.status).toBe(400)
+
+    const off = await call<BodyDocument>('/api/bodies/' + gas.body.id, json('PATCH', { rings: null }))
+    expect(off.body.rings).toBeNull()
+    const tree = await call<BodyTreeNode[]>('/api/bodies')
+    expect(tree.body.find((b) => b.id === gas.body.id)?.rings).toBeNull()
+  })
+
   it('valida a entrada', async (ctx) => {
     if (!available) return ctx.skip()
     const bad = await call<{ error: string }>(

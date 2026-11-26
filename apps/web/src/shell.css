@@ -668,3 +668,89 @@ a.chip {
   color: var(--text);
   text-decoration: none;
 }
+
+/* ------------------------------------------------- globo: corpos do ceu */
+
+.globe-body {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.globe-body:hover {
+  box-shadow: 0 0 0 2px rgba(232, 185, 100, 0.55);
+}
+
+.globe-body-name {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+
+.globe-body-name small {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------- aneis */
+
+.ring-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.ring-toggle span {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ring-editor {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.ring-preview {
+  background: radial-gradient(circle at 50% 50%, #16222e, #0a1016 75%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.ring-fields {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ring-fields .form-field > span:first-child {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.ring-fields input[type='range'] {
+  width: 100%;
+}

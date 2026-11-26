@@ -10,6 +10,7 @@ import {
   type LayerKind,
   type Material,
   type PatchBodyInput,
+  type RingSpec,
   type Poi,
   type SaveDocumentInput,
   type Territory,
@@ -36,6 +37,7 @@ function toMeta(row: BodyRow): BodyMeta {
     height: row.height,
     origin: row.origin,
     parentId: row.parentId,
+    rings: row.rings ?? null,
     revision: row.revision,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -63,6 +65,7 @@ export async function listTree(db: Database): Promise<BodyTreeNode[]> {
       width: bodies.width,
       height: bodies.height,
       origin: bodies.origin,
+      rings: bodies.rings,
       revision: bodies.revision,
       createdAt: bodies.createdAt,
       updatedAt: bodies.updatedAt,
@@ -221,6 +224,7 @@ export interface NewBody {
   width: number
   height: number
   origin: BodyOrigin
+  rings?: RingSpec | null
   materials: Material[]
   terrainPng: Buffer
   territoryPng?: Buffer
@@ -366,6 +370,7 @@ export async function createBody(db: Database, input: NewBody): Promise<BodyDocu
         width: input.width,
         height: input.height,
         origin: input.origin,
+        rings: input.rings ?? null,
         thumbnail,
       })
       .returning({ id: bodies.id })
@@ -399,6 +404,7 @@ export async function patchBody(
     if (patch.description !== undefined) set.description = patch.description
     if (patch.radiusKm !== undefined) set.radiusKm = patch.radiusKm
     if (patch.parentId !== undefined) set.parentId = patch.parentId
+    if (patch.rings !== undefined) set.rings = patch.rings
     await tx.update(bodies).set(set).where(eq(bodies.id, id))
   })
   return getDocument(db, id)

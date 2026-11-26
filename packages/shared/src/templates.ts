@@ -1,4 +1,4 @@
-import type { Material } from './domain'
+import type { Material, RingSpec } from './domain'
 import type { TemplateId } from './schemas'
 
 /**
@@ -12,6 +12,8 @@ export interface Template {
   materials: Material[]
   /** Codigo do material que preenche o mapa ao nascer. */
   fill: number
+  /** Aneis de saida (editaveis depois). */
+  rings?: RingSpec
 }
 
 export const TEMPLATES: Record<TemplateId, Template> = {
@@ -63,8 +65,9 @@ export const TEMPLATES: Record<TemplateId, Template> = {
   gasoso: {
     id: 'gasoso',
     label: 'Gigante gasoso',
-    hint: 'So gas, em faixas: pinte as tempestades por cima',
+    hint: 'So gas, em faixas, com aneis: pinte as tempestades por cima',
     fill: 0,
+    rings: { inner: 1.25, outer: 2.3, color: '#d8c49a', color2: '#9c8466', opacity: 0.8, seed: 7 },
     materials: [
       {
         code: 0,

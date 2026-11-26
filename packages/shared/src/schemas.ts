@@ -23,6 +23,17 @@ export const textureSchema = z.object({
   scale: z.number().min(1).max(4096).optional(),
 })
 
+export const ringSchema = z
+  .object({
+    inner: z.number().min(1.02, 'O anel tem de comecar fora do planeta').max(8),
+    outer: z.number().min(1.05).max(10, 'Anel largo demais (maximo 10x o raio)'),
+    color: hexColor,
+    color2: hexColor.optional(),
+    opacity: z.number().min(0).max(1),
+    seed: z.number().int().min(0).max(1_000_000),
+  })
+  .refine((r) => r.outer > r.inner + 0.02, 'A borda de fora tem de passar da de dentro')
+
 export const materialSchema = z.object({
   code: z.number().int().min(0).max(65535),
   name: text(80).min(1),
@@ -116,6 +127,7 @@ export const patchBodySchema = z.object({
   description: text(20000).optional(),
   radiusKm: radius.optional(),
   parentId: z.uuid().nullable().optional(),
+  rings: ringSchema.nullable().optional(),
 })
 
 export type PatchBodyInput = z.infer<typeof patchBodySchema>

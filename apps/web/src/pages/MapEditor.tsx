@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { useLocation, useNavigate, useParams } from 'react-router'
 import {
   PHASE_BIT,
   TERRITORY_PHASE,
@@ -113,6 +113,7 @@ const NEW_MATERIAL: Record<Phase, { name: string; color: string }> = {
 function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) {
   const { base } = body
   const navigate = useNavigate()
+  const location = useLocation()
   const mapRef = useRef<MapViewHandle>(null)
 
   // As camadas sao grandes demais para viverem no estado do React: ficam em
@@ -292,6 +293,20 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
       alive = false
     }
   }, [meta.parentId])
+
+  // Veio do globo de um vizinho: abre o globo deste corpo assim que o mapa
+  // estiver montado (a textura do globo e a do proprio mapa).
+  const openGlobeOnArrival = (location.state as { globe?: boolean } | null)?.globe === true
+  useEffect(() => {
+    if (loading || !openGlobeOnArrival) return
+    const timer = setTimeout(() => {
+      const texture = mapRef.current?.texture()
+      if (!texture) return
+      setGlobeTexture(texture)
+      setGlobe(true)
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [loading, openGlobeOnArrival])
 
   useEffect(() => {
     if (!status) return
@@ -974,6 +989,20 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
 
         {globe && (
           <GlobeView
+            body={meta}
+            onOpenBody={(id) => {
+              if (
+                dirty &&
+                !confirm(
+                  'Ha alteracoes nao salvas neste mapa. O rascunho fica guardado no navegador, ' +
+                    'mas o melhor e salvar antes. Ir mesmo assim?',
+                )
+              ) {
+                return
+              }
+              // Chega direto no globo do vizinho: da para passear pelo sistema.
+              navigate('/atlas/' + id, { state: { globe: true } })
+            }}
             base={base}
             world={world}
             source={globeTexture}

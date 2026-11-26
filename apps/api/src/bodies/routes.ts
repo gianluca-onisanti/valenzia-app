@@ -90,6 +90,7 @@ export async function bodyRoutes(app: FastifyInstance, opts: { db: Database }) {
       width: input.width,
       height: input.height,
       origin: 'blank',
+      rings: template.rings,
       materials: template.materials,
       terrainPng,
     })

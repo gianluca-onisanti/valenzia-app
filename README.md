@@ -67,7 +67,7 @@ que já tem luas não pode virar lua.
 
 | Tabela | O que guarda |
 | --- | --- |
-| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, miniatura, `revision` |
+| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), miniatura, `revision` |
 | `materials` | os materiais de terreno do corpo: nome, fase (`solid`, `liquid` ou `gas`), cor, textura |
 | `layers` | as três camadas raster, em PNG (`terrain`, `territory`, `biome`) |
 | `territories` | países, mares e zonas: nome, cor, ficha (governo, população...) |
@@ -195,8 +195,29 @@ outro para ficar com os pixels dele.
 ### Visões
 
 `1` Política, `2` Biomas, `3` Mista (o bioma em hachura sobre a cor do país).
-O botão de globo mostra o corpo como esfera. Na ficha de um território, o
-botão de olho abre o **recorte isolado**, com exportação em PNG e SVG.
+Na ficha de um território, o botão de olho abre o **recorte isolado**, com
+exportação em PNG e SVG.
+
+### Globo e sistema
+
+O botão de globo mostra o corpo como esfera, e em volta dele o **sistema**:
+num planeta, as luas dele; numa lua, o planeta-mãe e as luas irmãs. Os
+vizinhos orbitam no plano do equador e ficam sempre ao fundo: nunca tampam o
+corpo em foco. Clicar num vizinho abre o globo dele, e assim dá para passear
+pelo sistema. O botão **Sistema** esconde os vizinhos.
+
+A escala real não cabe na tela (a Lua vista da Terra ficaria a 60 raios de
+distância). Por isso as distâncias são artísticas e os tamanhos aparentes
+são comprimidos: um corpo maior continua maior, e um satélite minúsculo ainda
+aparece como um ponto. A textura de cada vizinho é a miniatura do atlas.
+
+### Anéis
+
+Na engrenagem do corpo, ligue **Anéis** e ajuste onde começam e terminam (em
+múltiplos do raio), a opacidade e as duas cores. **Sortear faixas** troca o
+desenho das faixas e falhas sem mudar as cores. O gigante gasoso já nasce
+com anéis. No globo, a metade de trás do anel passa atrás do planeta, e o
+anel inclina junto quando você arrasta para cima ou para baixo.
 
 ### Pontos
 
@@ -241,7 +262,7 @@ apps/web/src/
   pages/                  inicio, atlas, novo corpo, editor de mapa
   hooks/useBody.ts        carrega um corpo e as camadas da API
   lib/layers.ts           motor de pintura: estencil por fase, pincel, balde, laco, desfazer
-  lib/texture.ts          texturas procedurais (ruido, faixas, crateras)
+  lib/rings.ts            aneis: faixas sorteadas e as duas metades
   lib/trace.ts            camadas -> contornos vetoriais
   lib/vectorPaint.ts      desenho vetorial (canvas e SVG)
   lib/globe.ts            projecao na esfera
@@ -254,6 +275,7 @@ packages/shared/src/
   schemas.ts              validacao zod (so a API importa: @valenzia/shared/schemas)
   templates.ts            os modelos de planeta em branco
   area.ts                 area real por pixel, formatacao de km2
+  texture.ts              texturas procedurais (ruido, faixas, crateras), usadas no editor e nas miniaturas
 ```
 
 ### Por que a pintura não trava

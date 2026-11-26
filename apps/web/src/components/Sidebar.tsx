@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import { formatKm2, TERRITORY_PHASE, type Phase, type TextureSpec } from '@valenzia/shared'
+import {
+  PATTERN_IDS,
+  PATTERN_LABELS,
+  formatKm2,
+  TERRITORY_PHASE,
+  type Phase,
+  type TextureSpec,
+} from '@valenzia/shared'
 import type {
   BiomeArea,
   BiomeType,
@@ -16,7 +23,6 @@ import type { SlotStats } from './MapView'
 import type { PhaseTotals } from '../lib/layers'
 import { BIOMES, BIOME_TYPES } from '../lib/biomes'
 import { POI_TYPES, POI_TYPE_LIST } from '../lib/poiTypes'
-import { PATTERN_IDS, PATTERN_LABELS } from '../lib/texture'
 
 type Tab = 'paises' | 'mares' | 'zonas' | 'biomas' | 'pontos' | 'terreno'
 

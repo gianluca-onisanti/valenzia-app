@@ -1,4 +1,4 @@
-import type { TextureSpec } from '../types'
+import type { TextureSpec } from './domain'
 
 /**
  * Texturas procedurais dos materiais de terreno.

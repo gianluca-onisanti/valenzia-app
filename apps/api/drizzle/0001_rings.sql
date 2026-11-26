@@ -1,0 +1,1 @@
+ALTER TABLE "bodies" ADD COLUMN "rings" jsonb;

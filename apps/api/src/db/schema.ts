@@ -15,7 +15,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
-import type { TextureSpec } from '@valenzia/shared'
+import type { RingSpec, TextureSpec } from '@valenzia/shared'
 
 /** PNG e outros binarios. O driver postgres-js ja devolve Buffer. */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -52,6 +52,8 @@ export const bodies = pgTable(
     width: integer('width').notNull(),
     height: integer('height').notNull(),
     origin: bodyOrigin('origin').notNull(),
+    /** Aneis no plano do equador; nulo = sem aneis. */
+    rings: jsonb('rings').$type<RingSpec | null>(),
     thumbnail: bytea('thumbnail'),
     revision: integer('revision').notNull().default(0),
     ...timestamps,

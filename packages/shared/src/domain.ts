@@ -161,6 +161,22 @@ export function bodyKindOf(body: { parentId: string | null }): BodyKind {
   return body.parentId ? 'moon' : 'planet'
 }
 
+/**
+ * Aneis em volta do corpo, no plano do equador. Raios em multiplos do raio
+ * do proprio corpo (Saturno: de ~1,2 a ~2,3). As faixas e falhas saem de
+ * `seed`: o mesmo numero desenha sempre o mesmo anel.
+ */
+export interface RingSpec {
+  inner: number
+  outer: number
+  color: string
+  /** Cor da borda de fora; sem ela, o anel e de uma cor so. */
+  color2?: string
+  /** 0 a 1. */
+  opacity: number
+  seed: number
+}
+
 export interface BodyMeta {
   id: string
   name: string
@@ -170,6 +186,7 @@ export interface BodyMeta {
   height: number
   origin: BodyOrigin
   parentId: string | null
+  rings: RingSpec | null
   /** Sobe a cada Salvar; o editor manda a que leu para detectar conflito. */
   revision: number
   createdAt: string
