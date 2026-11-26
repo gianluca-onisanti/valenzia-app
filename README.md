@@ -269,7 +269,13 @@ inteiro. Vista de uma lua, a órbita anda mais devagar.
 A escala real não cabe na tela (a Lua vista da Terra ficaria a 60 raios de
 distância). Por isso as distâncias são artísticas e os tamanhos aparentes
 são comprimidos: um corpo maior continua maior, e um satélite minúsculo ainda
-aparece como um ponto. A textura de cada vizinho é a miniatura do atlas.
+aparece como um ponto.
+
+**Regra dos vizinhos:** quem não está em foco aparece sempre na **visão de
+biomas** (o chão com as texturas e os biomas por cima, sem países), qualquer
+que seja a visão escolhida no editor. A política é só do corpo em foco. A
+textura de cada vizinho é montada das camadas do servidor, com a mesma
+receita do editor, e fica em cache por revisão.
 
 ### Inclinação do eixo
 

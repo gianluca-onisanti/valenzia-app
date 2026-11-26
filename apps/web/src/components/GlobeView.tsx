@@ -16,6 +16,7 @@ import { strokeOnSphere, toSphere, type SpherePolyline } from '../lib/globeLines
 import { coastAlpha } from '../lib/vectorPaint'
 import type { Loop } from '../lib/trace'
 import { api } from '../lib/api'
+import { companionTexture } from '../lib/companionTexture'
 import { POI_TYPES } from '../lib/poiTypes'
 
 interface GlobeViewProps {
@@ -164,30 +165,6 @@ function extentFrom(focus: Member, others: Member[]): number {
   return extent
 }
 
-/** A miniatura do atlas vira a textura do vizinho. */
-function loadTexture(body: BodySummary): Promise<Texture> {
-  const flat = (): Texture => ({
-    data: new Uint8ClampedArray([140, 140, 136, 255, 140, 140, 136, 255]),
-    width: 2,
-    height: 1,
-  })
-  if (!body.hasThumbnail) return Promise.resolve(flat())
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      if (!ctx) return resolve(flat())
-      ctx.drawImage(img, 0, 0)
-      const image = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      resolve({ data: image.data, width: canvas.width, height: canvas.height })
-    }
-    img.onerror = () => resolve(flat())
-    img.src = api.thumbnailUrl(body.id, body.revision)
-  })
-}
 
 export function GlobeView(props: GlobeViewProps) {
   const { base, body } = props
@@ -241,7 +218,7 @@ export function GlobeView(props: GlobeViewProps) {
         const focus = members.find((m) => m.body.id === body.id)
         if (!focus) return
         const others = members.filter((m) => m !== focus)
-        const textures = await Promise.all(others.map((m) => loadTexture(m.body)))
+        const textures = await Promise.all(others.map((m) => companionTexture(m.body)))
         if (!alive) return
         setSystem({ focus, others: others.map((m, i) => ({ ...m, texture: textures[i] })) })
       })
