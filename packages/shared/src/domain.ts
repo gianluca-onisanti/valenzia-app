@@ -192,6 +192,11 @@ export interface BodyMeta {
    * No globo, tomba a esfera, os aneis e o plano das orbitas das luas.
    */
   axialTilt: number
+  /**
+   * Rotacao retrograda: o corpo gira no sentido contrario ao normal (como
+   * Venus). No globo, inverte o sentido do giro automatico.
+   */
+  retrograde: boolean
   /** Sobe a cada Salvar; o editor manda a que leu para detectar conflito. */
   revision: number
   createdAt: string

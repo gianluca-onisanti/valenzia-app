@@ -1,0 +1,1 @@
+ALTER TABLE "bodies" ADD COLUMN "retrograde" boolean DEFAULT false NOT NULL;

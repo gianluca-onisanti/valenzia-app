@@ -1,4 +1,5 @@
 import {
+  boolean,
   customType,
   doublePrecision,
   index,
@@ -56,6 +57,8 @@ export const bodies = pgTable(
     rings: jsonb('rings').$type<RingSpec | null>(),
     /** Inclinacao do eixo, em graus. */
     axialTilt: doublePrecision('axial_tilt').notNull().default(0),
+    /** Gira no sentido contrario ao normal. */
+    retrograde: boolean('retrograde').notNull().default(false),
     thumbnail: bytea('thumbnail'),
     revision: integer('revision').notNull().default(0),
     ...timestamps,

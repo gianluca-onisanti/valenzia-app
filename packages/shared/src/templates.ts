@@ -16,6 +16,7 @@ export interface Template {
   rings?: RingSpec
   /** Inclinacao do eixo de saida, em graus. */
   axialTilt?: number
+  retrograde?: boolean
 }
 
 export const TEMPLATES: Record<TemplateId, Template> = {

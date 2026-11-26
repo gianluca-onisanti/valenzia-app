@@ -517,7 +517,10 @@ export function GlobeView(props: GlobeViewProps) {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Giro automatico, ate a mao encostar.
+  // Giro automatico, ate a mao encostar. No sentido normal (anti-horario
+  // visto do polo norte, como a Terra) a superficie anda da esquerda para a
+  // direita, e a longitude no centro da tela diminui; a retrograda inverte.
+  const spinSign = body.retrograde ? 1 : -1
   useEffect(() => {
     if (!spinning) return
     let last = performance.now()
@@ -527,7 +530,7 @@ export function GlobeView(props: GlobeViewProps) {
       // para a esfera em resolucao cheia.
       if (dt >= 40) {
         last = now
-        setRotation((r) => ({ ...r, lon: r.lon + SPIN * dt }))
+        setRotation((r) => ({ ...r, lon: r.lon + spinSign * SPIN * dt }))
       }
       frameRef.current = requestAnimationFrame(step)
     }
@@ -535,7 +538,7 @@ export function GlobeView(props: GlobeViewProps) {
     return () => {
       if (frameRef.current) cancelAnimationFrame(frameRef.current)
     }
-  }, [spinning])
+  }, [spinning, spinSign])
 
   const onPointerDown = (event: React.PointerEvent) => {
     ;(event.currentTarget as Element).setPointerCapture?.(event.pointerId)

@@ -32,6 +32,7 @@ export function BodySettingsDialog({
   })
   const [rings, setRings] = useState<RingSpec | null>(body.rings)
   const [axialTilt, setAxialTilt] = useState(body.axialTilt ?? 0)
+  const [retrograde, setRetrograde] = useState(body.retrograde ?? false)
   const [tree, setTree] = useState<BodyTreeNode[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,6 +67,7 @@ export function BodySettingsDialog({
         parentId: value.parentId,
         rings,
         axialTilt,
+        retrograde,
       })
       onSaved(saved)
       onClose()
@@ -126,7 +128,14 @@ export function BodySettingsDialog({
           hasMoons={moons.length > 0}
         />
 
-        <GlobeLook tilt={axialTilt} onTilt={setAxialTilt} rings={rings} onRings={setRings} />
+        <GlobeLook
+          tilt={axialTilt}
+          onTilt={setAxialTilt}
+          retrograde={retrograde}
+          onRetrograde={setRetrograde}
+          rings={rings}
+          onRings={setRings}
+        />
 
         {phases.length > 0 && (
           <p className="muted small">
@@ -195,11 +204,15 @@ const TILT_PRESETS = [
 function GlobeLook({
   tilt,
   onTilt,
+  retrograde,
+  onRetrograde,
   rings: value,
   onRings: onChange,
 }: {
   tilt: number
   onTilt: (deg: number) => void
+  retrograde: boolean
+  onRetrograde: (next: boolean) => void
   rings: RingSpec | null
   onRings: (next: RingSpec | null) => void
 }) {
@@ -209,7 +222,7 @@ function GlobeLook({
     <section className="form-field form-field--wide">
       <span>No globo</span>
       <div className="ring-editor">
-        <RingPreview spec={value} tilt={tilt} />
+        <RingPreview spec={value} tilt={tilt} retrograde={retrograde} />
         <div className="ring-fields">
           <label className="form-field">
             <span>Inclinacao do eixo: {Math.round(tilt)}°</span>
@@ -228,6 +241,27 @@ function GlobeLook({
                 {p.label} ({p.deg}°)
               </button>
             ))}
+          </div>
+          <div className="form-field">
+            <span>Rotacao</span>
+            <div className="segmented">
+              <button
+                type="button"
+                className={retrograde ? '' : 'active'}
+                onClick={() => onRetrograde(false)}
+                title="Anti-horaria vista do polo norte, como a Terra"
+              >
+                Normal
+              </button>
+              <button
+                type="button"
+                className={retrograde ? 'active' : ''}
+                onClick={() => onRetrograde(true)}
+                title="Gira ao contrario, como Venus"
+              >
+                Retrograda
+              </button>
+            </div>
           </div>
           <label className="ring-toggle">
             <input
@@ -313,7 +347,15 @@ function GlobeLook({
 }
 
 /** Um planeta neutro, com o eixo inclinado e o anel (se houver) em volta. */
-function RingPreview({ spec, tilt }: { spec: RingSpec | null; tilt: number }) {
+function RingPreview({
+  spec,
+  tilt,
+  retrograde,
+}: {
+  spec: RingSpec | null
+  tilt: number
+  retrograde: boolean
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = ref.current
@@ -368,7 +410,34 @@ function RingPreview({ spec, tilt }: { spec: RingSpec | null; tilt: number }) {
       ctx.arc(0, y, 2.5, 0, Math.PI * 2)
       ctx.fill()
     }
+    // O sentido do giro: uma seta na frente de um circulo em volta do polo
+    // norte. Na normal a frente anda para a direita; na retrograda, ao
+    // contrario.
+    const rx = r * 0.42
+    const ry = rx * 0.32
+    const py = -r * 1.08
+    const t0 = Math.PI * 0.12
+    const t1 = Math.PI * 0.88
+    ctx.strokeStyle = '#e8b964'
+    ctx.fillStyle = '#e8b964'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.ellipse(0, py, rx, ry, 0, t0, t1)
+    ctx.stroke()
+    const t = retrograde ? t1 : t0
+    const sign = retrograde ? 1 : -1
+    const tipX = rx * Math.cos(t)
+    const tipY = py + ry * Math.sin(t)
+    const angle = Math.atan2(sign * ry * Math.cos(t), -sign * rx * Math.sin(t))
+    ctx.translate(tipX, tipY)
+    ctx.rotate(angle)
+    ctx.beginPath()
+    ctx.moveTo(4, 0)
+    ctx.lineTo(-3, -3.5)
+    ctx.lineTo(-3, 3.5)
+    ctx.closePath()
+    ctx.fill()
     ctx.restore()
-  }, [spec, tilt])
+  }, [spec, tilt, retrograde])
   return <canvas ref={ref} className="ring-preview" style={{ width: 260, height: 150 }} />
 }

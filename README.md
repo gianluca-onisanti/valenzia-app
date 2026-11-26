@@ -67,7 +67,7 @@ que já tem luas não pode virar lua.
 
 | Tabela | O que guarda |
 | --- | --- |
-| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), inclinação do eixo (`axial_tilt`, graus), miniatura, `revision` |
+| `bodies` | nome, descrição, **raio em km**, largura e altura do mapa, `parent_id`, anéis (`rings`, jsonb), inclinação do eixo (`axial_tilt`, graus), sentido da rotação (`retrograde`), miniatura, `revision` |
 | `materials` | os materiais de terreno do corpo: nome, fase (`solid`, `liquid` ou `gas`), cor, textura |
 | `layers` | as três camadas raster, em PNG (`terrain`, `territory`, `biome`) |
 | `territories` | países, mares e zonas: nome, cor, ficha (governo, população...) |
@@ -227,6 +227,13 @@ para Terra, Saturno e Urano). No globo, a esfera tomba, o giro passa a ser
 em volta do eixo inclinado, os anéis tombam junto com o equador, e as órbitas
 das luas seguem a inclinação do planeta. O arrasto é lido no referencial do
 corpo, para a superfície continuar seguindo o mouse.
+
+### Sentido da rotação
+
+Logo abaixo, **Rotação** escolhe entre **Normal** (anti-horária vista do polo
+norte, como a Terra: a superfície anda da esquerda para a direita) e
+**Retrógrada** (ao contrário, como Vênus). A prévia mostra o sentido com uma
+seta em volta do polo, e o giro automático do globo segue a escolha.
 
 ### Anéis
 
