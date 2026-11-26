@@ -71,7 +71,9 @@ describe('API de corpos', () => {
     const body = await createBlank('Aqua')
     expect(body.revision).toBe(0)
     expect(body.parentId).toBeNull()
-    expect(body.materials.map((m) => m.phase).sort()).toEqual(['liquid', 'solid'])
+    expect(body.materials.map((m) => m.phase).sort()).toEqual(['liquid', 'solid', 'solid'])
+    // Todo corpo solido nasce com Gelo, para as geleiras.
+    expect(body.materials.find((m) => m.name === 'Gelo')).toMatchObject({ phase: 'solid', code: 2 })
 
     const res = await fetch(base + '/api/bodies/' + body.id + '/layers/terrain')
     expect(res.status).toBe(200)
@@ -314,6 +316,8 @@ describe('API de corpos', () => {
     expect(copy.status).toBe(201)
     expect(copy.body).toMatchObject({ name: 'Plano (Mercator)', width: 320, height: 160, sourceProjection: 'mercator' })
     expect(copy.body.id).not.toBe(body.id)
+    // O corpo ja tinha Gelo: a calota usa ele, sem um segundo Gelo.
+    expect(copy.body.materials.filter((m) => m.name === 'Gelo')).toHaveLength(1)
     expect(copy.body.pois[0].id).not.toBe(saved.body.pois[0].id)
     // O ponto desce em direcao ao equador e fica fora da calota.
     expect(copy.body.pois[0].y).toBeGreaterThan(10)

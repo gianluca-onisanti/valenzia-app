@@ -13,6 +13,7 @@ import {
   type PatchBodyInput,
   type ReprojectInput,
   type SourceProjection,
+  ICE,
   equirectHeight,
   mercatorRowMap,
   mercatorY,
@@ -519,9 +520,19 @@ export async function reprojectBody(
     if (!doc.materials.some((m) => m.code === capCode)) {
       throw badRequest('O material escolhido para as calotas nao existe neste corpo')
     }
+  } else if (
+    doc.materials.some((m) => m.name.trim().toLowerCase() === input.cap.material.name.trim().toLowerCase())
+  ) {
+    // Ja existe um material com esse nome (o Gelo, quase sempre): usa ele.
+    const wanted = input.cap.material.name.trim().toLowerCase()
+    capCode = doc.materials.find((m) => m.name.trim().toLowerCase() === wanted)!.code
   } else {
     capCode = doc.materials.reduce((max, m) => Math.max(max, m.code), -1) + 1
-    materialsOut = [...doc.materials, { code: capCode, texture: null, ...input.cap.material }]
+    const isIce = input.cap.material.name.trim().toLowerCase() === 'gelo'
+    materialsOut = [
+      ...doc.materials,
+      { code: capCode, texture: isIce ? ICE.texture : null, ...input.cap.material },
+    ]
   }
 
   const W = doc.width

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ICE,
   equirectHeight,
+  iceCode,
   mercatorMaxLat,
   mercatorRowMap,
   remapRows,
@@ -16,7 +18,6 @@ import { renderGlobe, type Texture } from '../lib/globe'
 /** Largura da textura das previas: os globos sao pequenos. */
 const PREVIEW_WIDTH = 1024
 const GLOBE_SIZE = 220
-const ICE = { name: 'Gelo', phase: 'solid' as const, color: '#e9f1f5' }
 
 const VIEWS = [
   { id: 'norte', label: 'Polo norte', lat: 1.15 },
@@ -49,7 +50,11 @@ export function ReprojectDialog({
   onClose: () => void
   onDone: (doc: BodyDocument, mode: ReprojectInput['mode']) => void
 }) {
-  const [capChoice, setCapChoice] = useState<string>('new-ice')
+  // Com Gelo no corpo, as calotas sao dele; sem, um Gelo novo.
+  const existingIce = iceCode(materials)
+  const [capChoice, setCapChoice] = useState<string>(
+    existingIce !== undefined ? String(existingIce) : 'new-ice',
+  )
   const [mode, setMode] = useState<ReprojectInput['mode']>('copy')
   const [name, setName] = useState(body.name + ' (Mercator)')
   const [view, setView] = useState<(typeof VIEWS)[number]['id']>('norte')
@@ -105,7 +110,9 @@ export function ReprojectDialog({
     setError(null)
     try {
       const cap: ReprojectInput['cap'] =
-        capChoice === 'new-ice' ? { material: ICE } : { code: Number(capChoice) }
+        capChoice === 'new-ice'
+          ? { material: { name: ICE.name, phase: ICE.phase, color: ICE.color } }
+          : { code: Number(capChoice) }
       const doc = await api.reproject(body.id, {
         expectedRevision: body.revision,
         mode,
@@ -186,7 +193,7 @@ export function ReprojectDialog({
               <label className="form-field">
                 <span>Calotas polares</span>
                 <select value={capChoice} onChange={(e) => setCapChoice(e.target.value)}>
-                  <option value="new-ice">Gelo (material novo)</option>
+                  {existingIce === undefined && <option value="new-ice">Gelo (material novo)</option>}
                   {materials.map((m) => (
                     <option key={m.code} value={String(m.code)}>
                       {m.name}

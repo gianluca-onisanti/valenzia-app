@@ -26,6 +26,7 @@ import {
   isUuid,
   type BiomeArea,
   type Poi,
+  withIce,
   type Territory,
 } from '@valenzia/shared'
 import { createDb } from '../db/client'
@@ -149,10 +150,10 @@ async function main() {
       width: geo.width,
       height: geo.height,
       origin: 'image',
-      materials: [
+      materials: withIce([
         { code: WATER_CODE, name: 'Mar', phase: 'liquid', color: geo.water },
         { code: LAND_CODE, name: 'Terra', phase: 'solid', color: geo.land },
-      ],
+      ]),
       terrainPng: await encodeLayerPng(terrain, geo.width, geo.height),
       territoryPng: await readLayer(path.join(dir, 'data', 'territory.png'), geo.width, geo.height),
       biomePng: await readLayer(path.join(dir, 'data', 'biome.png'), geo.width, geo.height),

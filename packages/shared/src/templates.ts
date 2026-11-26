@@ -19,13 +19,40 @@ export interface Template {
   retrograde?: boolean
 }
 
+/**
+ * Gelo: o material das geleiras e calotas polares. Todo corpo com superficie
+ * solida o tem a mao; gigantes gasosos, nao.
+ */
+export const ICE: Omit<Material, 'code'> = {
+  name: 'Gelo',
+  phase: 'solid',
+  color: '#e9f1f5',
+  texture: { pattern: 'ruido', color2: '#c9d8e0', intensity: 0.35, scale: 48 },
+}
+
+/** O codigo do Gelo nesta lista de materiais, se houver. */
+export function iceCode(materials: Material[]): number | undefined {
+  return materials.find((m) => m.name.trim().toLowerCase() === 'gelo')?.code
+}
+
+/**
+ * Acrescenta o Gelo a uma lista de materiais com superficie solida (codigo
+ * novo, depois do maior). Sem solido ou com Gelo ja presente, devolve igual.
+ */
+export function withIce(materials: Material[]): Material[] {
+  if (!materials.some((m) => m.phase === 'solid')) return materials
+  if (iceCode(materials) !== undefined) return materials
+  const code = materials.reduce((max, m) => Math.max(max, m.code), -1) + 1
+  return [...materials, { code, ...ICE }]
+}
+
 export const TEMPLATES: Record<TemplateId, Template> = {
   oceanico: {
     id: 'oceanico',
     label: 'Oceanico',
     hint: 'Tudo mar: desenhe os continentes por cima',
     fill: 0,
-    materials: [
+    materials: withIce([
       {
         code: 0,
         name: 'Mar',
@@ -40,14 +67,14 @@ export const TEMPLATES: Record<TemplateId, Template> = {
         color: '#7fbf5a',
         texture: { pattern: 'ruido', color2: '#5e8f3e', intensity: 0.4, scale: 48 },
       },
-    ],
+    ]),
   },
   rochoso: {
     id: 'rochoso',
     label: 'Rochoso',
     hint: 'Tudo rocha: abra lagos e desertos',
     fill: 1,
-    materials: [
+    materials: withIce([
       { code: 0, name: 'Lago', phase: 'liquid', color: '#3f8fb5' },
       {
         code: 1,
@@ -63,7 +90,7 @@ export const TEMPLATES: Record<TemplateId, Template> = {
         color: '#d9b77a',
         texture: { pattern: 'ruido', intensity: 0.3, scale: 24 },
       },
-    ],
+    ]),
   },
   gasoso: {
     id: 'gasoso',
@@ -94,7 +121,7 @@ export const TEMPLATES: Record<TemplateId, Template> = {
     label: 'Lua cinzenta',
     hint: 'Regolito por toda parte',
     fill: 0,
-    materials: [
+    materials: withIce([
       {
         code: 0,
         name: 'Regolito',
@@ -109,7 +136,7 @@ export const TEMPLATES: Record<TemplateId, Template> = {
         color: '#5f5f5c',
         texture: { pattern: 'ruido', intensity: 0.35, scale: 50 },
       },
-    ],
+    ]),
   },
 }
 

@@ -4,10 +4,11 @@ import {
   LAYER_KINDS,
   TEMPLATES,
   equirectHeight,
+  iceCode,
   mercatorRowMap,
+  withIce,
   remapRows,
   type LayerKind,
-  type Material,
 } from '@valenzia/shared'
 import {
   createBlankSchema,
@@ -21,14 +22,6 @@ import { badRequest } from '../errors'
 import { encodeLayerPng, filledLayer } from '../terrain/codec'
 import { WATER_CODE, extractTerrain, terrainFromExtraction } from '../terrain/extract'
 
-/** A calota polar de gelo, quando a imagem vem em Mercator. */
-const ICE_MATERIAL: Material = {
-  code: 2,
-  name: 'Gelo',
-  phase: 'solid',
-  color: '#e9f1f5',
-  texture: { pattern: 'ruido', color2: '#c9d8e0', intensity: 0.35, scale: 48 },
-}
 import {
   createBody,
   deleteBody,
@@ -150,17 +143,15 @@ export async function bodyRoutes(app: FastifyInstance, opts: { db: Database }) {
       landColor: input.landColor,
       waterColor: input.waterColor,
     })
-    let { terrain, materials } = extracted
+    let { terrain } = extracted
+    // Terra e mar da imagem, mais o Gelo para as geleiras.
+    const materials = withIce(extracted.materials)
     let height = result.height
     // Desenhada em Mercator: as linhas vao para o lugar certo e o que passa
     // da latitude coberta vira calota (mar, ou gelo como material novo).
     if (input.projection === 'mercator') {
       height = equirectHeight(result.width)
-      let capCode = WATER_CODE
-      if (input.cap === 'ice') {
-        capCode = ICE_MATERIAL.code
-        materials = [...materials, ICE_MATERIAL]
-      }
+      const capCode = input.cap === 'ice' ? (iceCode(materials) ?? WATER_CODE) : WATER_CODE
       terrain = remapRows(terrain, result.width, mercatorRowMap(result.width, result.height, height), [capCode])
     }
     const body = await createBody(db, {

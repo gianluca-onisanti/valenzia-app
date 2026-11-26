@@ -192,6 +192,13 @@ editor de nome, cor, fase e **textura**: liso, ruído, faixas (para gás) ou
 crateras, com segunda cor, intensidade e escala. Excluir um material pede
 outro para ficar com os pixels dele.
 
+Todo corpo com superfície sólida tem **Gelo** (sólido, branco-azulado, com
+textura de ruído) para geleiras e calotas polares: vem nos modelos Oceânico,
+Rochoso e Lua cinzenta, nos corpos criados a partir de imagem, e foi
+acrescentado aos corpos que já existiam (migração 0005). Gigantes gasosos
+não ganham. Um rascunho do navegador feito antes disso recebe o material
+novo ao ser restaurado.
+
 No fim da aba, **Limpar manchas** some com ilhotas, lagoinhas e pingos de
 material menores que um limite (de 16 a 1024 px): cada mancha vira o
 material que mais a cerca. A contagem aparece antes de limpar, e dá para

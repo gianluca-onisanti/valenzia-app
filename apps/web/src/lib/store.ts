@@ -15,12 +15,25 @@ export function newId(): string {
  * tinham ids em texto ("novo-pais-2"); aqui eles viram uuids, e quem nao tem
  * materiais herda os do mapa aberto.
  */
+/**
+ * Materiais do rascunho, mais os que o servidor ganhou depois dele (o Gelo,
+ * por exemplo, chega por migracao). So entra o que nao colide nem em codigo
+ * nem em nome com o rascunho: um codigo novo nao tem pixel nenhum pintado
+ * no rascunho, entao nada muda no mapa.
+ */
+function mergeMaterials(draft: Material[], server: Material[]): Material[] {
+  const codes = new Set(draft.map((m) => m.code))
+  const names = new Set(draft.map((m) => m.name.trim().toLowerCase()))
+  const extra = server.filter((m) => !codes.has(m.code) && !names.has(m.name.trim().toLowerCase()))
+  return extra.length ? [...draft, ...extra] : draft
+}
+
 export function normalizeWorld(raw: Partial<World>, fallbackMaterials: Material[]): World {
   const fix = <T extends { id?: string }>(items: T[] | undefined) =>
     (items ?? []).map((item) => ({ ...item, id: isUuid(item.id) ? item.id : newId() }))
   return {
     name: raw.name ?? 'Sem nome',
-    materials: raw.materials?.length ? raw.materials : fallbackMaterials,
+    materials: raw.materials?.length ? mergeMaterials(raw.materials, fallbackMaterials) : fallbackMaterials,
     territories: fix(raw.territories) as Territory[],
     biomes: fix(raw.biomes) as BiomeArea[],
     pois: fix(raw.pois) as Poi[],
