@@ -915,7 +915,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
       ctx.imageSmoothingQuality = 'high'
       ctx.scale(scale, scale)
       drawScene(ctx, scene, { base, materials: world.materials, view: flat, scale, selection: null })
-      return canvas
+      return { canvas, vector: true }
     }
     // Contornos ainda sendo tracados: o raster serve por enquanto.
     const raw = document.createElement('canvas')
@@ -935,7 +935,7 @@ function Editor({ body, onReload }: { body: LoadedBody; onReload: () => void }) 
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(raw, 0, 0, canvas.width, canvas.height)
-    return canvas
+    return { canvas, vector: false }
   }, [base, layers, palette, view.mode, world.materials])
 
   /** Costa e fronteiras em vetor, para o globo projetar a cada quadro. */

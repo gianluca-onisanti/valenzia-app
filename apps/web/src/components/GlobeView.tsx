@@ -23,8 +23,12 @@ interface GlobeViewProps {
   body: BodyMeta
   base: MapBase
   world: World
-  /** Monta a pele do globo: so as cores, sem linha nenhuma. */
-  makeTexture: () => HTMLCanvasElement | null
+  /**
+   * Monta a pele do globo: so as cores, sem linha nenhuma. `vector: false`
+   * quer dizer que os contornos ainda estavam sendo tracados e veio o raster
+   * provisorio: o globo pede de novo ate vir a versao vetorial.
+   */
+  makeTexture: () => { canvas: HTMLCanvasElement; vector: boolean } | null
   /** Costa e fronteiras em vetor (null enquanto o mapa ainda as traca). */
   makeLines: () => GlobeLines | null
   /** Pontos a mostrar; vazio esconde todos. */
@@ -42,6 +46,10 @@ export interface GlobeLines {
   coast: Loop[]
   borders: { loops: Loop[]; color: string }[]
 }
+
+/** Intervalo e limite das tentativas de pegar a versao vetorial do mapa. */
+const RETRY_MS = 400
+const MAX_RETRIES = 50
 
 /** Espessura das linhas, em pixels de tela: nao muda com o zoom. */
 const COAST_WIDTH = 1.4
@@ -298,15 +306,40 @@ export function GlobeView(props: GlobeViewProps) {
    */
   const [texture, setTexture] = useState<Texture | null>(null)
   const { makeTexture } = props
+  /**
+   * Sobe enquanto o editor ainda esta tracando os contornos: textura e linhas
+   * sao pedidas de novo ate virem em vetor. Sem isso, o globo aberto logo
+   * depois de uma pincelada ficava para sempre no raster provisorio.
+   */
+  const [retry, setRetry] = useState(0)
+  useEffect(() => setRetry(0), [props.version, showBorders])
+  const [pending, setPending] = useState(false)
   useEffect(() => {
-    const source = makeTexture()
-    if (!source) return
+    if (!pending) return
+    const id = window.setTimeout(() => {
+      setPending(false)
+      setRetry((n) => n + 1)
+    }, RETRY_MS)
+    return () => window.clearTimeout(id)
+  }, [pending, retry])
+
+  // So a ultima textura vetorial importa: depois dela, novas tentativas nao
+  // refazem a pele (so as linhas, se faltarem).
+  const vectorDone = useRef('')
+  useEffect(() => {
+    const key = props.version + ':' + base.width + 'x' + base.height
+    if (vectorDone.current === key) return
+    const made = makeTexture()
+    if (!made) return
+    const { canvas: source, vector } = made
     const ctx = source.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
     const image = ctx.getImageData(0, 0, source.width, source.height)
     setTexture({ data: image.data, width: source.width, height: source.height })
+    if (vector) vectorDone.current = key
+    else if (retry < MAX_RETRIES) setPending(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.version, base.width, base.height])
+  }, [props.version, base.width, base.height, retry])
 
   /** Costa e fronteiras ja na esfera, prontas para girar e projetar. */
   const linesRef = useRef<{ coast: SpherePolyline[]; borders: { lines: SpherePolyline[]; color: string }[] } | null>(null)
@@ -317,6 +350,7 @@ export function GlobeView(props: GlobeViewProps) {
       return
     }
     const lines = makeLines()
+    if (!lines && retry < MAX_RETRIES) setPending(true)
     linesRef.current = lines && {
       coast: toSphere(lines.coast, base.width, base.height),
       borders: lines.borders.map((b) => ({
@@ -325,7 +359,7 @@ export function GlobeView(props: GlobeViewProps) {
       })),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showBorders, props.version, makeLines, base.width, base.height])
+  }, [showBorders, props.version, makeLines, base.width, base.height, retry])
 
   const sphere: Sphere = useMemo(
     () => ({ cx: size.w / 2, cy: size.h / 2, r: radius }),
